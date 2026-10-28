@@ -1,9 +1,17 @@
-import { CreateImportDto } from '@csv/contracts';
-import { Import } from '@csv/database';
+import {
+  type CreateImportDto,
+  type ImportDetailResponseDto,
+  type ImportListQueryDto,
+  type ImportListResponseDto,
+  type ImportRowsPageResponseDto,
+  type ImportRowsQueryDto,
+} from '@csv/contracts';
+import { Import, ImportRow } from '@csv/database';
 import {
   Inject,
   Injectable,
   Logger,
+  NotFoundException,
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
@@ -27,6 +35,8 @@ export class ImportService {
   constructor(
     @InjectRepository(Import)
     private readonly repository: Repository<Import>,
+    @InjectRepository(ImportRow)
+    private readonly rowRepository: Repository<ImportRow>,
     @Inject(storageConfig.KEY)
     private readonly storageConfig: StorageConfig,
     @InjectQueue(IMPORT_QUEUE)
@@ -61,6 +71,76 @@ export class ImportService {
 
   async save(data: CreateImportDto) {
     return this.repository.save(data);
+  }
+
+  async listImports(query: ImportListQueryDto): Promise<ImportListResponseDto> {
+    const [imports, total] = await this.repository.findAndCount({
+      order: { createdAt: 'DESC', id: 'DESC' },
+      take: query.limit,
+      skip: query.offset,
+    });
+
+    return {
+      items: imports.map((record) => this.toListItem(record)),
+      page: { ...query, total },
+    };
+  }
+
+  async getImport(importId: string): Promise<ImportDetailResponseDto> {
+    const record = await this.repository.findOneBy({ id: importId });
+    if (!record) throw new NotFoundException('Import was not found.');
+
+    return {
+      ...this.toListItem(record),
+      startedAt: record.startedAt?.toISOString() ?? null,
+      completedAt: record.completedAt?.toISOString() ?? null,
+      failureReason: record.failureReason,
+    };
+  }
+
+  async listImportRows(
+    importId: string,
+    query: ImportRowsQueryDto,
+  ): Promise<ImportRowsPageResponseDto> {
+    const record = await this.repository.findOne({
+      where: { id: importId },
+      select: { id: true },
+    });
+    if (!record) throw new NotFoundException('Import was not found.');
+
+    const where = {
+      import: { id: importId },
+      ...(query.status === undefined ? {} : { status: query.status }),
+    };
+    const [rows, total] = await this.rowRepository.findAndCount({
+      where,
+      order: { rowNumber: 'ASC' },
+      take: query.limit,
+      skip: query.offset,
+    });
+
+    return {
+      items: rows.map((row) => ({
+        rowNumber: row.rowNumber,
+        status: row.status,
+        rawValue: row.rawValue,
+        issues: row.issues,
+      })),
+      page: { limit: query.limit, offset: query.offset, total },
+    };
+  }
+
+  private toListItem(record: Import): ImportListResponseDto['items'][number] {
+    return {
+      id: record.id,
+      originalFileName: record.originalFileName,
+      status: record.status,
+      totalRows: record.totalRows,
+      processedRows: record.processedRows,
+      successRows: record.successRows,
+      failedRows: record.failedRows,
+      createdAt: record.createdAt.toISOString(),
+    };
   }
 
   async enqueue(importId: string) {

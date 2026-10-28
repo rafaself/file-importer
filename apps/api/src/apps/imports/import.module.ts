@@ -1,7 +1,7 @@
 import { Module } from '@nestjs/common';
 import { ImportService } from './import.service.js';
 import { ImportController } from './import.controller.js';
-import { Import } from '@csv/database';
+import { Import, ImportRow } from '@csv/database';
 import { IMPORT_QUEUE } from '@csv/shared';
 import { BullModule } from '@nestjs/bullmq';
 import { TypeOrmModule } from '@nestjs/typeorm';
@@ -9,7 +9,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 @Module({
   providers: [ImportService],
   imports: [
-    TypeOrmModule.forFeature([Import]),
+    TypeOrmModule.forFeature([Import, ImportRow]),
     BullModule.registerQueue({ name: IMPORT_QUEUE }),
   ],
   controllers: [ImportController],

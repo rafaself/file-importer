@@ -3,7 +3,11 @@ import {
   Controller,
   HttpCode,
   HttpStatus,
+  Get,
+  Param,
+  ParseUUIDPipe,
   Post,
+  Query,
   UploadedFile,
   UseInterceptors,
 } from '@nestjs/common';
@@ -13,10 +17,39 @@ import { FileInterceptor } from '@nestjs/platform-express';
 import { type StoredUpload, uploadToDisk } from '@nestjs/storage';
 import { FILE_TYPES, MAX_FILE_SIZE } from '@csv/storage';
 import { detectCsvContentType } from './import.utils.js';
+import { importListQuerySchema, importRowsQuerySchema } from '@csv/contracts';
 
-@Controller('import')
+@Controller('imports')
 export class ImportController {
   constructor(private readonly service: ImportService) {}
+
+  @Get()
+  async listImports(@Query() query: unknown) {
+    const result = importListQuerySchema.safeParse(query);
+    if (!result.success) {
+      throw new BadRequestException('Invalid import pagination query.');
+    }
+    return this.service.listImports(result.data);
+  }
+
+  @Get(':id')
+  async getImport(
+    @Param('id', new ParseUUIDPipe({ version: '4' })) importId: string,
+  ) {
+    return this.service.getImport(importId);
+  }
+
+  @Get(':id/rows')
+  async listImportRows(
+    @Param('id', new ParseUUIDPipe({ version: '4' })) importId: string,
+    @Query() query: unknown,
+  ) {
+    const result = importRowsQuerySchema.safeParse(query);
+    if (!result.success) {
+      throw new BadRequestException('Invalid import row query.');
+    }
+    return this.service.listImportRows(importId, result.data);
+  }
 
   @Post()
   @HttpCode(HttpStatus.ACCEPTED)

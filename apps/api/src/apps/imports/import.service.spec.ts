@@ -1,6 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { ImportService } from './import.service.js';
-import { Import } from '@csv/database';
+import { Import, ImportRow } from '@csv/database';
 import { ImportStatus, IMPORT_QUEUE, PROCESS_IMPORT_JOB } from '@csv/shared';
 import { getQueueToken } from '@nestjs/bullmq';
 import { Logger } from '@nestjs/common';
@@ -10,15 +10,18 @@ import { storageConfig } from '../../configs/storage.config.js';
 describe('ImportService', () => {
   let service: ImportService;
   let repository: { save: ReturnType<typeof vi.fn> };
+  let rowRepository: Record<string, never>;
   let queue: { add: ReturnType<typeof vi.fn> };
 
   beforeEach(async () => {
     repository = { save: vi.fn() };
+    rowRepository = {};
     queue = { add: vi.fn().mockResolvedValue({}) };
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         ImportService,
         { provide: getRepositoryToken(Import), useValue: repository },
+        { provide: getRepositoryToken(ImportRow), useValue: rowRepository },
         { provide: storageConfig.KEY, useValue: {} },
         { provide: getQueueToken(IMPORT_QUEUE), useValue: queue },
       ],
