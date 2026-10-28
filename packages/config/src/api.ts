@@ -1,18 +1,23 @@
+import z from "zod";
+import {
+  httpUrlSchema,
+  parseEnv,
+  portSchema,
+  requiredString,
+} from "./validation.js";
+
+const apiEnvSchema = z
+  .object({
+    API_PORT: portSchema,
+    API_URL: httpUrlSchema,
+    API_HOST: requiredString,
+  })
+  .transform(({ API_PORT: apiPort, API_URL: apiUrl, API_HOST: apiHost }) => ({
+    apiUrl,
+    apiHost,
+    apiPort,
+  }));
+
 export function loadApiConfig(env: NodeJS.ProcessEnv) {
-  const apiPort = Number(env.API_PORT?.trim());
-  if (apiPort < 1 || apiPort > 65535) {
-    throw new Error("API_PORT must be a number between 1 and 65535.");
-  }
-
-  const apiUrl = env.API_URL?.trim();
-  if (!apiUrl) {
-    throw new Error("API_URL is required.");
-  }
-
-  const apiHost = env.API_HOST?.trim();
-  if (!apiHost) {
-    throw new Error("API_HOST is required.");
-  }
-
-  return { apiUrl, apiHost, apiPort };
+  return parseEnv(apiEnvSchema, env);
 }

@@ -1,15 +1,16 @@
+import z from "zod";
+import { parseEnv, requiredString } from "./validation.js";
+
+const databaseEnvSchema = z.object({
+  DATABASE_URL: requiredString
+    .pipe(z.url({ protocol: /^postgres(?:ql)?$/ }))
+    .refine((value) => {
+      if (!URL.canParse(value)) return false;
+      const url = new URL(value);
+      return Boolean(url.hostname && url.pathname.length > 1);
+    }, "Expected a PostgreSQL URL with a host and database name."),
+});
+
 export function loadDatabaseConfig(env: NodeJS.ProcessEnv): string {
-  const databaseUrl = env.DATABASE_URL?.trim();
-
-  if (!databaseUrl) {
-    throw new Error("DATABASE_URL is required.");
-  }
-
-  const POSTGRES_URL_REGEX =
-    /^postgres(?:ql)?:\/\/[^:\s]+:[^@\s]+@[^:\s]+:\d+\/[^\s/?#]+(?:\?[^\s#]*)?$/;
-  if (!POSTGRES_URL_REGEX.test(databaseUrl)) {
-    throw new Error("DATABASE_URL must be a valid PostgreSQL URL.");
-  }
-
-  return databaseUrl;
+  return parseEnv(databaseEnvSchema, env).DATABASE_URL;
 }

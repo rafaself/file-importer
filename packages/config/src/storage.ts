@@ -1,3 +1,23 @@
+import z from "zod";
+import { httpUrlSchema, parseEnv, requiredString } from "./validation.js";
+
+const storageEnvSchema = z.discriminatedUnion("STORAGE_DRIVER", [
+  z.object({
+    STORAGE_DRIVER: z.literal("local"),
+    STORAGE_ROOT: requiredString,
+    SIGNING_KEY: requiredString,
+    BASE_URL: httpUrlSchema,
+  }),
+  z.object({
+    STORAGE_DRIVER: z.literal("s3"),
+    S3_ENDPOINT: httpUrlSchema,
+    S3_REGION: requiredString,
+    S3_APP_BUCKET: requiredString,
+    S3_PRIVATE_BUCKET: requiredString,
+    PUBLIC_URL: httpUrlSchema,
+  }),
+]);
+
 export interface LocalObjectStorage {
   root: string;
   signingKey: string;
@@ -23,59 +43,30 @@ export type StorageConfig =
     };
 
 export function loadStorageConfig(env: NodeJS.ProcessEnv): StorageConfig {
-  const storageDriver = env.STORAGE_DRIVER?.trim().toLowerCase() ?? "local";
+  const values = parseEnv(storageEnvSchema, {
+    ...env,
+    STORAGE_DRIVER: env.STORAGE_DRIVER?.trim().toLowerCase() ?? "local",
+  });
 
-  switch (storageDriver) {
-    case "s3":
-      const endpoint = env.S3_ENDPOINT?.trim();
-      const region = env.S3_REGION?.trim();
-      const publicBucket = env.S3_APP_BUCKET?.trim();
-      const privateBucket = env.S3_PRIVATE_BUCKET?.trim();
-      const publicUrl = env.PUBLIC_URL?.trim();
-
-      if (
-        !endpoint ||
-        !region ||
-        !publicBucket ||
-        !privateBucket ||
-        !publicUrl
-      ) {
-        throw new Error("Missing required S3 storage configuration.");
-      }
-
-      return {
-        driver: storageDriver,
-        objectStorage: {
-          endpoint,
-          region,
-          publicBucket,
-          privateBucket,
-          publicUrl,
-        },
-      };
-
-    case "local":
-      const storageRoot = env.STORAGE_ROOT?.trim();
-      const signingKey = env.SIGNING_KEY?.trim();
-      const baseUrl = env.BASE_URL?.trim();
-
-      if (!signingKey || !baseUrl || !storageRoot)
-        throw Error(
-          "The environment variables 'SIGNING_KEY', 'BASE_URL' and 'STORAGE_ROOT' must be provided.",
-        );
-
-      return {
-        driver: storageDriver,
-        objectStorage: {
-          root: storageRoot,
-          signingKey,
-          baseUrl,
-        },
-      };
-
-    default:
-      throw new Error(
-        "Missing or unsupported storage driver. Allowed drivers: 'local' and 's3'.",
-      );
+  if (values.STORAGE_DRIVER === "local") {
+    return {
+      driver: "local",
+      objectStorage: {
+        root: values.STORAGE_ROOT,
+        signingKey: values.SIGNING_KEY,
+        baseUrl: values.BASE_URL,
+      },
+    };
   }
+
+  return {
+    driver: "s3",
+    objectStorage: {
+      endpoint: values.S3_ENDPOINT,
+      region: values.S3_REGION,
+      publicBucket: values.S3_APP_BUCKET,
+      privateBucket: values.S3_PRIVATE_BUCKET,
+      publicUrl: values.PUBLIC_URL,
+    },
+  };
 }
