@@ -1,7 +1,7 @@
 import { Import, ImportRow } from '@csv/database';
 import { ImportRowStatus, ImportStatus } from '@csv/shared';
 import type { StorageDisk } from '@nestjs/storage';
-import type { Repository } from 'typeorm';
+import type { EntityManager, Repository } from 'typeorm';
 import { Readable } from 'node:stream';
 import { ImportProcessingService } from './import-processing.service.js';
 
@@ -16,40 +16,71 @@ function createService(csv: string) {
     findOneBy: vi.fn().mockResolvedValue(record),
     update: vi.fn().mockResolvedValue({ affected: 1 }),
   };
-  const rawRows: Array<{ status: ImportRowStatus; count: string }> = [];
+  const persistedRows = new Map<number, ImportRow>();
   const queryBuilder = {
     select: vi.fn().mockReturnThis(),
     addSelect: vi.fn().mockReturnThis(),
     where: vi.fn().mockReturnThis(),
     groupBy: vi.fn().mockReturnThis(),
-    getRawMany: vi.fn().mockImplementation(async () => rawRows),
+    getRawMany: vi.fn().mockImplementation(async () => {
+      const counts = new Map<ImportRowStatus, number>();
+      for (const row of persistedRows.values()) {
+        counts.set(row.status, (counts.get(row.status) ?? 0) + 1);
+      }
+      return Array.from(counts, ([status, count]) => ({
+        status,
+        count: String(count),
+      }));
+    }),
   };
   const rows = {
     create: vi.fn((row) => row),
-    upsert: vi.fn().mockImplementation(async (row) => {
-      const existing = rawRows.find((item) => item.status === row.status);
-      if (existing) existing.count = String(Number(existing.count) + 1);
-      else rawRows.push({ status: row.status, count: '1' });
+    upsert: vi.fn().mockImplementation(async (batch: ImportRow[]) => {
+      for (const row of batch) persistedRows.set(row.rowNumber, row);
     }),
     createQueryBuilder: vi.fn(() => queryBuilder),
   };
+  const manager = {
+    getRepository: vi.fn((entity) => (entity === Import ? imports : rows)),
+  };
+  const rowsWithManager = Object.assign(rows, {
+    manager: {
+      transaction: vi.fn(
+        async (callback: (transactionalManager: EntityManager) => unknown) =>
+          callback(manager as unknown as EntityManager),
+      ),
+    },
+  });
+  const sourceStreams: Readable[] = [];
   const sourceDisk = {
-    get: vi.fn().mockResolvedValue({ body: Readable.from([csv]) }),
+    get: vi.fn().mockImplementation(async () => {
+      const body = Readable.from([csv]);
+      sourceStreams.push(body);
+      return { body };
+    }),
   };
   const service = new ImportProcessingService(
     imports as unknown as Repository<Import>,
-    rows as unknown as Repository<ImportRow>,
+    rowsWithManager as unknown as Repository<ImportRow>,
     sourceDisk as unknown as StorageDisk,
   );
 
-  return { service, imports, rows, sourceDisk, record, rawRows };
+  return {
+    service,
+    imports,
+    rows: rowsWithManager,
+    sourceDisk,
+    record,
+    sourceStreams,
+  };
 }
 
 describe('ImportProcessingService', () => {
-  it('upserts generic raw row outcomes, then completes with counts', async () => {
-    const { service, imports, rows, rawRows, record } = createService(
-      'name,email,company\n Ana , ana@example.com , Example \nBob,invalid,Example\n',
-    );
+  it('counts, then upserts generic raw row outcomes in a transaction', async () => {
+    const { service, imports, rows, sourceDisk, sourceStreams, record } =
+      createService(
+        'name,email,company\n Ana , ana@example.com , Example \nBob,invalid,Example\n',
+      );
 
     await expect(service.processImport(importId)).resolves.toEqual({
       processedRows: 2,
@@ -57,34 +88,35 @@ describe('ImportProcessingService', () => {
       failedRows: 1,
     });
 
-    expect(rows.upsert).toHaveBeenCalledTimes(2);
-    expect(rows.upsert).toHaveBeenNthCalledWith(
-      1,
-      expect.objectContaining({
-        import: record,
-        rowNumber: 1,
-        status: ImportRowStatus.VALID,
-        rawValue: {
-          name: ' Ana ',
-          email: ' ana@example.com ',
-          company: ' Example ',
-        },
-        issues: [],
-      }),
-      { conflictPaths: ['import', 'rowNumber'] },
-    );
-    expect(rows.upsert).toHaveBeenNthCalledWith(
-      2,
-      expect.objectContaining({
-        rowNumber: 2,
-        status: ImportRowStatus.INVALID,
-        rawValue: {
-          name: 'Bob',
-          email: 'invalid',
-          company: 'Example',
-        },
-        issues: [expect.objectContaining({ field: 'email' })],
-      }),
+    expect(sourceDisk.get).toHaveBeenCalledTimes(2);
+    expect(sourceStreams.every((stream) => stream.readableEnded)).toBe(true);
+    expect(rows.manager.transaction).toHaveBeenCalledOnce();
+    expect(rows.upsert).toHaveBeenCalledOnce();
+    expect(rows.upsert).toHaveBeenCalledWith(
+      [
+        expect.objectContaining({
+          import: record,
+          rowNumber: 1,
+          status: ImportRowStatus.VALID,
+          rawValue: {
+            name: ' Ana ',
+            email: ' ana@example.com ',
+            company: ' Example ',
+          },
+          issues: [],
+        }),
+        expect.objectContaining({
+          import: record,
+          rowNumber: 2,
+          status: ImportRowStatus.INVALID,
+          rawValue: {
+            name: 'Bob',
+            email: 'invalid',
+            company: 'Example',
+          },
+          issues: [expect.objectContaining({ field: 'email' })],
+        }),
+      ],
       { conflictPaths: ['import', 'rowNumber'] },
     );
     expect(imports.update).toHaveBeenNthCalledWith(
@@ -95,8 +127,15 @@ describe('ImportProcessingService', () => {
         totalRows: null,
       }),
     );
-    expect(imports.update).toHaveBeenNthCalledWith(
-      2,
+    expect(imports.update).toHaveBeenNthCalledWith(2, importId, {
+      totalRows: 2,
+    });
+    expect(imports.update).toHaveBeenNthCalledWith(3, importId, {
+      processedRows: 2,
+      successRows: 1,
+      failedRows: 1,
+    });
+    expect(imports.update).toHaveBeenLastCalledWith(
       importId,
       expect.objectContaining({
         status: ImportStatus.COMPLETED,
@@ -106,10 +145,6 @@ describe('ImportProcessingService', () => {
         failedRows: 1,
       }),
     );
-    expect(rawRows).toEqual([
-      { status: ImportRowStatus.VALID, count: '1' },
-      { status: ImportRowStatus.INVALID, count: '1' },
-    ]);
   });
 
   it('marks file-level parser errors failed and throws a bounded reason', async () => {

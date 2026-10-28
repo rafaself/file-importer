@@ -15,7 +15,12 @@ export class CsvFileError extends Error {
   }
 }
 
-type RowBase = { rowNumber: number; rawValue: CustomerRowDto };
+export type CustomerRowRecord = {
+  rowNumber: number;
+  rawValue: CustomerRowDto;
+};
+
+type RowBase = CustomerRowRecord;
 export type CustomerRowOutcome = RowBase &
   (
     | { status: ImportRowStatus.VALID; normalized: CustomerRowDto; issues: [] }
@@ -26,9 +31,9 @@ export type CustomerRowOutcome = RowBase &
       }
   );
 
-export async function* parseCustomerRows(
+export async function* parseCustomerRecords(
   source: Readable,
-): AsyncGenerator<CustomerRowOutcome> {
+): AsyncGenerator<CustomerRowRecord> {
   let headerSeen = false;
   const parser = parse({
     bom: true,
@@ -61,29 +66,8 @@ export async function* parseCustomerRows(
     for await (const record of parser) {
       // Exact columns and the parser's default string output establish this shape.
       const rawValue = record as CustomerRowDto;
-      const result = customerRowSchema.safeParse(rawValue);
       rowNumber++;
-
-      if (result.success) {
-        yield {
-          rowNumber,
-          rawValue,
-          status: ImportRowStatus.VALID,
-          normalized: result.data,
-          issues: [],
-        };
-      } else {
-        yield {
-          rowNumber,
-          rawValue,
-          status: ImportRowStatus.INVALID,
-          normalized: null,
-          issues: result.error.issues.slice(0, MAX_ISSUES).map((issue) => ({
-            field: issue.path.join('.'),
-            message: issue.message.slice(0, 160),
-          })),
-        };
-      }
+      yield { rowNumber, rawValue };
     }
 
     const transfer = await transferred;
@@ -102,5 +86,31 @@ export async function* parseCustomerRows(
     parser.destroy();
     source.destroy();
     await transferred;
+  }
+}
+
+export async function* parseCustomerRows(
+  source: Readable,
+): AsyncGenerator<CustomerRowOutcome> {
+  for await (const record of parseCustomerRecords(source)) {
+    const result = customerRowSchema.safeParse(record.rawValue);
+    if (result.success) {
+      yield {
+        ...record,
+        status: ImportRowStatus.VALID,
+        normalized: result.data,
+        issues: [],
+      };
+    } else {
+      yield {
+        ...record,
+        status: ImportRowStatus.INVALID,
+        normalized: null,
+        issues: result.error.issues.slice(0, MAX_ISSUES).map((issue) => ({
+          field: issue.path.join('.'),
+          message: issue.message.slice(0, 160),
+        })),
+      };
+    }
   }
 }
