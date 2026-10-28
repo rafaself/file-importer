@@ -16,6 +16,11 @@ const importSummarySchema = z.strictObject({
   createdAt: z.iso.datetime(),
 });
 
+export const importAcceptedResponseSchema = z.strictObject({
+  id: z.uuid(),
+  status: z.literal(ImportStatus.PENDING),
+});
+
 const hasConsistentCounts = (summary: z.output<typeof importSummarySchema>) =>
   summary.successRows + summary.failedRows === summary.processedRows &&
   (summary.totalRows === null || summary.processedRows <= summary.totalRows) &&

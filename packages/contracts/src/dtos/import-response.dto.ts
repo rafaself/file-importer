@@ -1,5 +1,6 @@
 import type z from "zod";
 import type {
+  importAcceptedResponseSchema,
   importDetailResponseSchema,
   importListItemSchema,
   importListResponseSchema,
@@ -13,6 +14,9 @@ import type {
 } from "../schemas/import/import-query.schema.js";
 
 export type ImportListItemDto = z.infer<typeof importListItemSchema>;
+export type ImportAcceptedResponseDto = z.infer<
+  typeof importAcceptedResponseSchema
+>;
 export type ImportListResponseDto = z.infer<typeof importListResponseSchema>;
 export type ImportDetailResponseDto = z.infer<
   typeof importDetailResponseSchema
