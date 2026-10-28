@@ -3,5 +3,6 @@ packages:
   - "packages/*"
 allowBuilds:
   esbuild: true
+  msgpackr-extract: false
 minimumReleaseAgeExclude:
   - "@nestjs/storage@0.0.2"

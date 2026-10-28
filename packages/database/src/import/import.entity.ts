@@ -14,9 +14,9 @@ import { ImportRow } from "./import-row/import-row.entity.js";
 
 @Entity({ name: "imports" })
 @Check(`"totalRows" IS NULL OR "totalRows" >= 0`)
-@Check(`"processedRows" BETWEEN 1 and 10000`)
-@Check(`"successRows" BETWEEN 1 and 10000`)
-@Check(`"failedRows" BETWEEN 1 and 10000`)
+@Check(`"processedRows" >= 0`)
+@Check(`"successRows" >= 0`)
+@Check(`"failedRows" >= 0`)
 @Check(`"successRows" + "failedRows" = "processedRows"`)
 @Check(`"totalRows" IS NULL OR "processedRows" <= "totalRows"`)
 export class Import {
