@@ -1,11 +1,14 @@
 import {
   BadRequestException,
   Controller,
+  HttpCode,
+  HttpStatus,
   Post,
   UploadedFile,
   UseInterceptors,
 } from '@nestjs/common';
 import { ImportService } from './import.service.js';
+import type { Import } from '@csv/database';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { type StoredUpload, uploadToDisk } from '@nestjs/storage';
 import { FILE_TYPES, MAX_FILE_SIZE } from '@csv/storage';
@@ -16,6 +19,7 @@ export class ImportController {
   constructor(private readonly service: ImportService) {}
 
   @Post()
+  @HttpCode(HttpStatus.ACCEPTED)
   @UseInterceptors(
     FileInterceptor('file', {
       storage: uploadToDisk({
@@ -31,15 +35,18 @@ export class ImportController {
       throw new BadRequestException('File must be provided.');
     }
 
+    let savedImport: Import;
     try {
-      const savedImport = await this.service.save({
+      savedImport = await this.service.save({
         originalFileName: file.originalname,
         storageKey: file.key,
       });
-      return { id: savedImport.id, status: savedImport.status };
     } catch (err) {
       await this.service.deleteFile(file.key, file.disk!);
       throw err;
     }
+
+    await this.service.enqueue(savedImport.id);
+    return { id: savedImport.id, status: savedImport.status };
   }
 }

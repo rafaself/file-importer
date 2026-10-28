@@ -1,7 +1,10 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { ImportController } from './import.controller.js';
 import { ImportService } from './import.service.js';
-import { BadRequestException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ServiceUnavailableException,
+} from '@nestjs/common';
 import type { StoredUpload } from '@nestjs/storage';
 import { ImportStatus } from '@csv/shared';
 
@@ -9,6 +12,7 @@ describe('ImportController', () => {
   let controller: ImportController;
   let service: {
     save: ReturnType<typeof vi.fn>;
+    enqueue: ReturnType<typeof vi.fn>;
     deleteFile: ReturnType<typeof vi.fn>;
   };
   const file: StoredUpload = {
@@ -25,6 +29,7 @@ describe('ImportController', () => {
   beforeEach(async () => {
     service = {
       save: vi.fn(),
+      enqueue: vi.fn().mockResolvedValue(undefined),
       deleteFile: vi.fn().mockResolvedValue(undefined),
     };
     const module: TestingModule = await Test.createTestingModule({
@@ -52,6 +57,7 @@ describe('ImportController', () => {
       originalFileName: file.originalname,
       storageKey: file.key,
     });
+    expect(service.enqueue).toHaveBeenCalledExactlyOnceWith(savedImport.id);
     expect(service.deleteFile).not.toHaveBeenCalled();
   });
 
@@ -60,6 +66,7 @@ describe('ImportController', () => {
       BadRequestException,
     );
     expect(service.save).not.toHaveBeenCalled();
+    expect(service.enqueue).not.toHaveBeenCalled();
     expect(service.deleteFile).not.toHaveBeenCalled();
   });
 
@@ -72,5 +79,17 @@ describe('ImportController', () => {
       file.key,
       file.disk,
     );
+    expect(service.enqueue).not.toHaveBeenCalled();
+  });
+
+  it('keeps the source file when enqueueing a saved import fails', async () => {
+    const id = '842773bc-df96-42bb-8be1-ec2e9c5e7409';
+    service.save.mockResolvedValue({ id, status: ImportStatus.PENDING });
+    const failure = new ServiceUnavailableException({ id });
+    service.enqueue.mockRejectedValue(failure);
+
+    await expect(controller.importData(file)).rejects.toBe(failure);
+    expect(service.enqueue).toHaveBeenCalledWith(id);
+    expect(service.deleteFile).not.toHaveBeenCalled();
   });
 });
