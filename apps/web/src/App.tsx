@@ -1,40 +1,67 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ImportDetails } from "./imports/ImportDetails";
 import { ImportList } from "./imports/ImportList";
 import { ImportUpload } from "./imports/ImportUpload";
+import {
+  importPath,
+  isPlainLeftClick,
+  readRoute,
+  type Route,
+} from "./navigation";
 import "./App.css";
 
 function App() {
-  const [selectedImportId, setSelectedImportId] = useState<string | null>(() =>
-    new URLSearchParams(window.location.search).get("import"),
-  );
-  const [listRefreshToken, setListRefreshToken] = useState(0);
+  const [route, setRoute] = useState<Route>(readRoute);
+  const [uploadKey, setUploadKey] = useState(0);
+  const dialogRef = useRef<HTMLDialogElement>(null);
+  const uploadBusyRef = useRef(false);
 
-  const selectImport = useCallback((importId: string | null) => {
-    setSelectedImportId(importId);
-    const url = new URL(window.location.href);
-    if (importId) url.searchParams.set("import", importId);
-    else url.searchParams.delete("import");
-    window.history.pushState({}, "", `${url.pathname}${url.search}${url.hash}`);
+  const syncRoute = useCallback(() => {
+    setRoute(readRoute());
+  }, []);
+
+  const navigate = useCallback((path: string) => {
+    const current = `${window.location.pathname}${window.location.search}`;
+    if (current !== path) window.history.pushState({}, "", path);
+    setRoute(readRoute());
   }, []);
 
   useEffect(() => {
-    const syncSelection = () => {
-      setSelectedImportId(
-        new URLSearchParams(window.location.search).get("import"),
-      );
-    };
-    window.addEventListener("popstate", syncSelection);
-    return () => window.removeEventListener("popstate", syncSelection);
+    const current = readRoute();
+    if (current.name === "import" && current.legacy) {
+      window.history.replaceState({}, "", importPath(current.id));
+      setRoute({ name: "import", id: current.id });
+    }
   }, []);
 
-  const handleImportAvailable = useCallback(
-    (importId: string) => {
-      setListRefreshToken((value) => value + 1);
-      selectImport(importId);
-    },
-    [selectImport],
-  );
+  useEffect(() => {
+    window.addEventListener("popstate", syncRoute);
+    return () => window.removeEventListener("popstate", syncRoute);
+  }, [syncRoute]);
+
+  useEffect(() => {
+    const dialog = dialogRef.current;
+    if (!dialog || uploadKey === 0 || dialog.open) return;
+    dialog.showModal();
+  }, [uploadKey]);
+
+  const setUploadBusy = useCallback((busy: boolean) => {
+    uploadBusyRef.current = busy;
+  }, []);
+
+  function openImportDialog() {
+    setUploadKey((value) => value + 1);
+  }
+
+  function closeImportDialog() {
+    dialogRef.current?.close();
+  }
+
+  function openImport(importId: string) {
+    uploadBusyRef.current = false;
+    closeImportDialog();
+    navigate(importPath(importId));
+  }
 
   return (
     <div className="app-shell">
@@ -43,8 +70,9 @@ function App() {
           className="brand"
           href="/"
           onClick={(event) => {
+            if (!isPlainLeftClick(event)) return;
             event.preventDefault();
-            selectImport(null);
+            navigate("/");
           }}
         >
           <span className="brand-mark" aria-hidden="true">
@@ -54,86 +82,61 @@ function App() {
             File Importer<span className="brand-period">.</span>
           </span>
         </a>
-        <div className="topbar-meta">
-          <span className="connection-dot" aria-hidden="true" />
-          <span>Import workspace</span>
-        </div>
       </header>
 
-      <main className="dashboard">
-        <section className="welcome-block">
-          <div>
-            <p className="eyebrow">
-              CSV WORKSPACE{" "}
-              <span className="welcome-sparkle" aria-hidden="true">
-                ✳
-              </span>
-            </p>
-            <h1>
-              Make sense of your
-              <br className="desktop-break" /> incoming data.
-            </h1>
-            <p className="welcome-copy">
-              Upload a file, track its progress, and review every row in one
-              place.
-            </p>
-          </div>
-          <div className="welcome-aside" aria-hidden="true">
-            <span className="aside-line aside-line-one" />
-            <span className="aside-line aside-line-two" />
-            <span className="aside-line aside-line-three" />
-            <span className="aside-caption">
-              One file at a time.
-              <br />
-              Every row accounted for.
-            </span>
-          </div>
-        </section>
-
-        <div
-          className={`dashboard-grid ${selectedImportId ? "has-selection" : ""}`}
-        >
-          <div className="dashboard-main-column">
-            <ImportUpload onImportAvailable={handleImportAvailable} />
-            <ImportList
-              key={listRefreshToken}
-              selectedId={selectedImportId}
-              onSelect={selectImport}
-            />
-          </div>
-          <aside
-            className="dashboard-detail-column"
-            aria-label="Selected import details"
-          >
-            {selectedImportId ? (
-              <ImportDetails
-                key={selectedImportId}
-                importId={selectedImportId}
-                onClose={() => selectImport(null)}
-              />
-            ) : (
-              <div className="selection-placeholder">
-                <span className="placeholder-art" aria-hidden="true">
-                  <span className="placeholder-sheet placeholder-sheet-back" />
-                  <span className="placeholder-sheet placeholder-sheet-front">
-                    <i />
-                    <i />
-                    <i />
-                    <i />
-                  </span>
-                </span>
-                <p className="eyebrow">Your next step</p>
-                <h2>
-                  Select an import
-                  <br />
-                  to see the details.
-                </h2>
-                <p>Row outcomes and validation notes will appear here.</p>
-              </div>
-            )}
-          </aside>
-        </div>
+      <main className="page">
+        {route.name === "home" ? (
+          <ImportList onOpen={openImport} onRequestImport={openImportDialog} />
+        ) : route.name === "import" ? (
+          <ImportDetails
+            key={route.id}
+            importId={route.id}
+            onBack={() => navigate("/")}
+          />
+        ) : (
+          <section className="panel not-found">
+            <h1>Page not found</h1>
+            <p>That address is not part of the importer.</p>
+            <a
+              className="text-button"
+              href="/"
+              onClick={(event) => {
+                if (!isPlainLeftClick(event)) return;
+                event.preventDefault();
+                navigate("/");
+              }}
+            >
+              Back to imports
+            </a>
+          </section>
+        )}
       </main>
+
+      <dialog
+        ref={dialogRef}
+        className="import-dialog"
+        aria-labelledby="upload-title"
+        onCancel={(event) => {
+          if (uploadBusyRef.current) event.preventDefault();
+        }}
+        onClick={(event) => {
+          if (event.target === dialogRef.current && !uploadBusyRef.current) {
+            closeImportDialog();
+          }
+        }}
+      >
+        {uploadKey > 0 && (
+          <ImportUpload
+            key={uploadKey}
+            onAccepted={openImport}
+            onOpenImport={openImport}
+            onDismiss={() => {
+              if (!uploadBusyRef.current) closeImportDialog();
+            }}
+            onBusyChange={setUploadBusy}
+          />
+        )}
+      </dialog>
 
       <footer className="site-footer">
         <span>File Importer</span>

@@ -1,8 +1,9 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type MouseEvent } from "react";
 import type {
   ImportDetailResponseDto,
   ImportRowsPageResponseDto,
 } from "@csv/contracts";
+import { isPlainLeftClick } from "../navigation";
 import {
   ApiError,
   getImport,
@@ -18,7 +19,7 @@ const PENDING_START_TIMEOUT_MS = 60_000;
 
 type ImportDetailsProps = {
   importId: string;
-  onClose: () => void;
+  onBack: () => void;
 };
 
 type RowStatus = RowStatusFilter;
@@ -199,7 +200,7 @@ function ImportRowsSection({
   );
 }
 
-export function ImportDetails({ importId, onClose }: ImportDetailsProps) {
+export function ImportDetails({ importId, onBack }: ImportDetailsProps) {
   const [summaryResult, setSummaryResult] = useState<{
     importId: string;
     data: ImportDetailResponseDto;
@@ -318,22 +319,18 @@ export function ImportDetails({ importId, onClose }: ImportDetailsProps) {
           : "0 rows identified"
         : `${visibleSummary?.processedRows ?? 0} of ${totalRows} rows · ${Math.round(((visibleSummary?.processedRows ?? 0) / totalRows) * 100)}%`;
 
+  function handleBack(event: MouseEvent<HTMLAnchorElement>) {
+    if (!isPlainLeftClick(event)) return;
+    event.preventDefault();
+    onBack();
+  }
+
   return (
-    <section className="panel details-panel" aria-labelledby="details-title">
-      <div className="panel-heading details-heading">
-        <div>
-          <p className="eyebrow">Import details</p>
-          <h2 id="details-title">Processing overview</h2>
-        </div>
-        <button
-          className="icon-button close-details"
-          type="button"
-          onClick={onClose}
-          aria-label="Close import details"
-        >
-          ×
-        </button>
-      </div>
+    <div className="details-page">
+      <a className="back-link" href="/" onClick={handleBack}>
+        <span aria-hidden="true">←</span>
+        Imports
+      </a>
 
       {error && (
         <div className="inline-error" role="alert">
@@ -373,108 +370,119 @@ export function ImportDetails({ importId, onClose }: ImportDetailsProps) {
       )}
 
       {isLoading && !visibleSummary ? (
-        <div className="details-loading" role="status">
+        <div className="panel details-loading" role="status">
           <span className="button-spinner" aria-hidden="true" />
           Loading import…
         </div>
       ) : visibleSummary ? (
         <>
-          <div className="detail-file-heading">
-            <div className="detail-file-icon" aria-hidden="true">
-              CSV
+          <section
+            className="panel details-summary"
+            aria-labelledby="details-title"
+          >
+            <div className="detail-file-heading">
+              <div className="detail-file-icon" aria-hidden="true">
+                CSV
+              </div>
+              <div className="detail-file-text">
+                <p className="eyebrow">Import</p>
+                <h1 id="details-title">{visibleSummary.originalFileName}</h1>
+                <span>Created {formatDate(visibleSummary.createdAt)}</span>
+              </div>
+              <span className={`status-pill status-${visibleSummary.status}`}>
+                <span className="status-dot" aria-hidden="true" />
+                {visibleSummary.status}
+              </span>
             </div>
-            <div className="detail-file-text">
-              <strong>{visibleSummary.originalFileName}</strong>
-              <span>Created {formatDate(visibleSummary.createdAt)}</span>
-            </div>
-            <span className={`status-pill status-${visibleSummary.status}`}>
-              <span className="status-dot" aria-hidden="true" />
-              {visibleSummary.status}
-            </span>
-          </div>
 
-          <div className="progress-block">
-            <div className="progress-caption">
-              <strong>{progressLabel}</strong>
-              {isActive(visibleSummary.status) && !isStalled && (
-                <span className="live-indicator">Live</span>
-              )}
+            <div className="progress-block">
+              <div className="progress-caption">
+                <strong>{progressLabel}</strong>
+                {isActive(visibleSummary.status) && !isStalled && (
+                  <span className="live-indicator">Live</span>
+                )}
+              </div>
+              <progress
+                aria-label="Import progress"
+                max={progressMax}
+                value={progressValue}
+              />
+              <div className="summary-counts">
+                <div>
+                  <strong>{visibleSummary.processedRows}</strong>
+                  <span>Processed</span>
+                </div>
+                <div>
+                  <strong>{visibleSummary.successRows}</strong>
+                  <span>Valid</span>
+                </div>
+                <div>
+                  <strong>{visibleSummary.failedRows}</strong>
+                  <span>Needs review</span>
+                </div>
+              </div>
             </div>
-            <progress
-              aria-label="Import progress"
-              max={progressMax}
-              value={progressValue}
-            />
-            <div className="summary-counts">
+
+            <dl className="detail-metadata">
               <div>
-                <strong>{visibleSummary.processedRows}</strong>
-                <span>Processed</span>
+                <dt>Started</dt>
+                <dd>{formatDate(visibleSummary.startedAt)}</dd>
               </div>
               <div>
-                <strong>{visibleSummary.successRows}</strong>
-                <span>Valid</span>
+                <dt>Finished</dt>
+                <dd>{formatDate(visibleSummary.completedAt)}</dd>
               </div>
+            </dl>
+
+            {visibleSummary.failureReason && (
+              <div className="notice notice-error detail-failure" role="status">
+                <strong>Import could not be completed</strong>
+                <span>{visibleSummary.failureReason}</span>
+                {canRetry && (
+                  <button
+                    className="button button-quiet"
+                    type="button"
+                    onClick={() => void handleRetry()}
+                    disabled={isRetrying}
+                  >
+                    {isRetrying ? "Retrying…" : "Retry import"}
+                  </button>
+                )}
+              </div>
+            )}
+          </section>
+
+          <section
+            className="details-rows"
+            aria-labelledby="row-outcomes-title"
+          >
+            <div className="row-results-heading">
               <div>
-                <strong>{visibleSummary.failedRows}</strong>
-                <span>Needs review</span>
+                <p className="eyebrow">Row outcomes</p>
+                <h2 id="row-outcomes-title">Review the records</h2>
               </div>
+              <span className="row-results-count">
+                {visibleSummary.failedRows} to review
+              </span>
             </div>
-          </div>
 
-          <dl className="detail-metadata">
-            <div>
-              <dt>Started</dt>
-              <dd>{formatDate(visibleSummary.startedAt)}</dd>
+            <div className="row-results-grid">
+              <ImportRowsSection
+                key={`${importId}-valid`}
+                importId={importId}
+                status="valid"
+                processedRows={visibleSummary.processedRows}
+              />
+              <ImportRowsSection
+                key={`${importId}-invalid`}
+                importId={importId}
+                status="invalid"
+                processedRows={visibleSummary.processedRows}
+              />
             </div>
-            <div>
-              <dt>Finished</dt>
-              <dd>{formatDate(visibleSummary.completedAt)}</dd>
-            </div>
-          </dl>
-
-          {visibleSummary.failureReason && (
-            <div className="notice notice-error detail-failure" role="status">
-              <strong>Import could not be completed</strong>
-              <span>{visibleSummary.failureReason}</span>
-              {canRetry && (
-                <button
-                  className="button button-quiet"
-                  type="button"
-                  onClick={() => void handleRetry()}
-                  disabled={isRetrying}
-                >
-                  {isRetrying ? "Retrying…" : "Retry import"}
-                </button>
-              )}
-            </div>
-          )}
-
-          <div className="row-results-heading">
-            <div>
-              <p className="eyebrow">Row outcomes</p>
-              <h3>Review the records</h3>
-            </div>
-            <span className="row-results-count">
-              {visibleSummary.failedRows} to review
-            </span>
-          </div>
-
-          <div className="row-results-grid">
-            <ImportRowsSection
-              key={`${importId}-valid`}
-              importId={importId}
-              status="valid"
-              processedRows={visibleSummary.processedRows}
-            />
-            <ImportRowsSection
-              key={`${importId}-invalid`}
-              importId={importId}
-              status="invalid"
-              processedRows={visibleSummary.processedRows}
-            />
-          </div>
+          </section>
         </>
       ) : null}
-    </section>
+    </div>
   );
 }

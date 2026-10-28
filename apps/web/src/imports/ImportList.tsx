@@ -1,12 +1,13 @@
 import { useEffect, useState } from "react";
 import type { ImportListResponseDto } from "@csv/contracts";
+import { importPath, isPlainLeftClick } from "../navigation";
 import { ApiError, getImports } from "./api";
 
 const PAGE_SIZE = 20;
 
 type ImportListProps = {
-  selectedId: string | null;
-  onSelect: (importId: string) => void;
+  onOpen: (importId: string) => void;
+  onRequestImport: () => void;
 };
 
 type ListResult = {
@@ -30,7 +31,7 @@ function statusLabel(status: string): string {
   return status.charAt(0).toUpperCase() + status.slice(1);
 }
 
-export function ImportList({ selectedId, onSelect }: ImportListProps) {
+export function ImportList({ onOpen, onRequestImport }: ImportListProps) {
   const [result, setResult] = useState<ListResult | null>(null);
   const [offset, setOffset] = useState(0);
   const [manualRefresh, setManualRefresh] = useState(0);
@@ -75,18 +76,28 @@ export function ImportList({ selectedId, onSelect }: ImportListProps) {
     >
       <div className="panel-heading list-heading">
         <div>
-          <p className="eyebrow">Workspace</p>
-          <h2 id="imports-title">Recent imports</h2>
+          <h1 id="imports-title">Imports</h1>
+          <p>Recent files and where each one stands.</p>
         </div>
-        <button
-          className="button button-quiet"
-          type="button"
-          onClick={() => setManualRefresh((value) => value + 1)}
-          disabled={isLoading}
-        >
-          <span aria-hidden="true">↻</span>
-          Refresh
-        </button>
+        <div className="list-actions">
+          <button
+            className="button button-quiet"
+            type="button"
+            onClick={() => setManualRefresh((value) => value + 1)}
+            disabled={isLoading}
+          >
+            <span aria-hidden="true">↻</span>
+            Refresh
+          </button>
+          <button
+            className="button button-subtle"
+            type="button"
+            onClick={onRequestImport}
+          >
+            <span aria-hidden="true">+</span>
+            Import file
+          </button>
+        </div>
       </div>
 
       {error && (
@@ -118,7 +129,7 @@ export function ImportList({ selectedId, onSelect }: ImportListProps) {
             ∅
           </span>
           <strong>No imports yet</strong>
-          <p>Your uploaded files will appear here.</p>
+          <p>Imported files will show up in this table.</p>
         </div>
       ) : (
         <>
@@ -134,20 +145,16 @@ export function ImportList({ selectedId, onSelect }: ImportListProps) {
               </thead>
               <tbody>
                 {imports.map((record) => (
-                  <tr
-                    key={record.id}
-                    className={
-                      selectedId === record.id ? "selected-row" : undefined
-                    }
-                  >
+                  <tr key={record.id}>
                     <td>
-                      <button
-                        className="import-select"
-                        type="button"
-                        onClick={() => onSelect(record.id)}
-                        aria-current={
-                          selectedId === record.id ? "true" : undefined
-                        }
+                      <a
+                        className="import-link"
+                        href={importPath(record.id)}
+                        onClick={(event) => {
+                          if (!isPlainLeftClick(event)) return;
+                          event.preventDefault();
+                          onOpen(record.id);
+                        }}
                       >
                         <span className="file-mini-icon" aria-hidden="true">
                           CSV
@@ -155,7 +162,7 @@ export function ImportList({ selectedId, onSelect }: ImportListProps) {
                         <span className="import-file-name">
                           {record.originalFileName}
                         </span>
-                      </button>
+                      </a>
                     </td>
                     <td>
                       <span className={`status-pill status-${record.status}`}>

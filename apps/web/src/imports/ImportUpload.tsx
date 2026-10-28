@@ -1,9 +1,12 @@
-import { useRef, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import type { ImportAcceptedResponseDto } from "@csv/contracts";
 import { ApiError, uploadImport } from "./api";
 
 type ImportUploadProps = {
-  onImportAvailable: (importId: string) => void;
+  onAccepted: (importId: string) => void;
+  onOpenImport: (importId: string) => void;
+  onDismiss: () => void;
+  onBusyChange: (busy: boolean) => void;
 };
 
 type UploadNotice =
@@ -11,11 +14,24 @@ type UploadNotice =
   | { kind: "queued-error"; importId: string; message: string }
   | { kind: "error"; message: string };
 
-export function ImportUpload({ onImportAvailable }: ImportUploadProps) {
+export function ImportUpload({
+  onAccepted,
+  onOpenImport,
+  onDismiss,
+  onBusyChange,
+}: ImportUploadProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [file, setFile] = useState<File | null>(null);
   const [isUploading, setIsUploading] = useState(false);
   const [notice, setNotice] = useState<UploadNotice | null>(null);
+
+  useEffect(() => {
+    onBusyChange(isUploading);
+  }, [isUploading, onBusyChange]);
+
+  useEffect(() => {
+    return () => onBusyChange(false);
+  }, [onBusyChange]);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -28,7 +44,7 @@ export function ImportUpload({ onImportAvailable }: ImportUploadProps) {
       setNotice({ kind: "accepted", result });
       setFile(null);
       if (inputRef.current) inputRef.current.value = "";
-      onImportAvailable(result.id);
+      onAccepted(result.id);
     } catch (error) {
       if (error instanceof ApiError && error.importId) {
         setNotice({
@@ -36,7 +52,6 @@ export function ImportUpload({ onImportAvailable }: ImportUploadProps) {
           importId: error.importId,
           message: error.message,
         });
-        onImportAvailable(error.importId);
       } else {
         setNotice({
           kind: "error",
@@ -56,15 +71,21 @@ export function ImportUpload({ onImportAvailable }: ImportUploadProps) {
       <div className="panel-heading">
         <div>
           <p className="eyebrow">New import</p>
-          <h2 id="upload-title">Bring in a CSV</h2>
+          <h2 id="upload-title">Import a file</h2>
         </div>
-        <span className="panel-icon" aria-hidden="true">
-          ↑
-        </span>
+        <button
+          className="icon-button"
+          type="button"
+          onClick={onDismiss}
+          disabled={isUploading}
+          aria-label="Close import dialog"
+        >
+          ×
+        </button>
       </div>
 
       <p className="panel-copy">
-        Choose a file to validate and process in the background.
+        Choose one CSV. Processing continues after the upload is accepted.
       </p>
 
       <form onSubmit={handleSubmit}>
@@ -127,10 +148,14 @@ export function ImportUpload({ onImportAvailable }: ImportUploadProps) {
           <strong>Import saved; queueing needs attention</strong>
           <span>{notice.message}</span>
           <code>{notice.importId}</code>
-          <span>
-            Use the import ID above to inspect its status. Don’t upload again
-            yet.
-          </span>
+          <span>This file is already saved. Don’t upload it again yet.</span>
+          <button
+            className="button button-quiet"
+            type="button"
+            onClick={() => onOpenImport(notice.importId)}
+          >
+            View import
+          </button>
         </div>
       )}
       {notice?.kind === "error" && (
