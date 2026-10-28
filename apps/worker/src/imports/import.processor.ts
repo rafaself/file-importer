@@ -1,5 +1,5 @@
 import { Import } from '@csv/database';
-import { IMPORT_QUEUE, PROCESS_IMPORT_JOB } from '@csv/shared';
+import { IMPORT_QUEUE, PROCESS_IMPORT_JOB, ImportRowStatus } from '@csv/shared';
 import { Processor, WorkerHost } from '@nestjs/bullmq';
 import { Logger } from '@nestjs/common';
 import { InjectDisk, StorageDisk } from '@nestjs/storage';
@@ -7,6 +7,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import type { Job } from 'bullmq';
 import { Repository } from 'typeorm';
 import z from 'zod';
+import { parseCustomerRows } from './csv-parser.js';
 
 const importJobSchema = z.strictObject({ importId: z.uuid() });
 
@@ -42,13 +43,15 @@ export class ImportProcessor extends WorkerHost {
     }
 
     const source = await this.sourceDisk.get(record.storageKey);
-    let bytesRead = 0;
-    for await (const chunk of source.body) {
-      bytesRead += Buffer.byteLength(chunk);
+    let validRows = 0;
+    let invalidRows = 0;
+    for await (const row of parseCustomerRows(source.body)) {
+      if (row.status === ImportRowStatus.VALID) validRows++;
+      else invalidRows++;
     }
 
     this.logger.log(
-      `Verified source for import ${importId} (${bytesRead} bytes).`,
+      `Validated import ${importId}: ${validRows + invalidRows} rows (${validRows} valid, ${invalidRows} invalid).`,
     );
   }
 }

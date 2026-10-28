@@ -434,6 +434,9 @@ importers:
       bullmq:
         specifier: 6.5.0
         version: 6.5.0(ioredis@5.11.1(supports-color@7.2.0))(pg@8.23.0)
+      csv-parse:
+        specifier: 7.0.3
+        version: 7.0.3
       ioredis:
         specifier: 5.11.1
         version: 5.11.1(supports-color@7.2.0)
@@ -3323,6 +3326,12 @@ packages:
     resolution:
       {
         integrity: sha512-z1HGKcYy2xA8AGQfwrn0PAy+PB7X/GSj3UVJW9qKyn43xWa+gl5nXmU4qqLMRzWVLFC8KusUX8T/0kCiOYpAIQ==,
+      }
+
+  csv-parse@7.0.3:
+    resolution:
+      {
+        integrity: sha512-YFd3QM/yo17vH91L1IOZuvl09zM0zEEtdfTcOCKWcMdM++MNaQSyp09slXyFCLaPXvHstQFx/xC8myiFHSMUvw==,
       }
 
   dayjs@1.11.23:
@@ -7467,6 +7476,8 @@ snapshots:
       which: 2.0.2
 
   csstype@3.2.3: {}
+
+  csv-parse@7.0.3: {}
 
   dayjs@1.11.23: {}
 

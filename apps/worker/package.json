@@ -36,6 +36,7 @@
     "@nestjs/storage": "0.0.3",
     "@nestjs/typeorm": "12.0.2",
     "bullmq": "6.5.0",
+    "csv-parse": "7.0.3",
     "ioredis": "5.11.1",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1",

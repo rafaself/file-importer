@@ -44,8 +44,9 @@ describe('ImportProcessor', () => {
 
   afterEach(() => vi.restoreAllMocks());
 
-  it('reads the source stream without changing the pending import or logging its contents', async () => {
-    const content = 'private-customer-data';
+  it('validates streamed rows without changing the pending import or logging their contents', async () => {
+    const content =
+      'name,email,company\nPrivate Customer,ana@example.com,Example\n';
     const body = Readable.from([Buffer.from(content)]);
     const record = Object.assign(new Import(), {
       id: importId,
@@ -67,7 +68,23 @@ describe('ImportProcessor', () => {
     const logs = logCalls.flat().join(' ');
     expect(logs).toContain(importId);
     expect(logs).not.toContain(content);
+    expect(logs).not.toContain('Private Customer');
+    expect(logs).toContain('1 rows (1 valid, 0 invalid)');
     expect(logs).not.toContain(record.storageKey);
+  });
+
+  it('counts invalid customer rows without failing the whole diagnostic job', async () => {
+    repository.findOneBy.mockResolvedValue({ storageKey: 'source.csv' });
+    disk.get.mockResolvedValue({
+      body: Readable.from([
+        'name,email,company\nAna,ana@example.com,Example\nBob,invalid,Example\n,carol@example.com,Example\n',
+      ]),
+    });
+
+    await processor.process(makeJob());
+
+    expect(logCalls.flat().join(' ')).toContain('3 rows (1 valid, 2 invalid)');
+    expect(repository.save).not.toHaveBeenCalled();
   });
 
   it('rejects unknown job names before accessing storage or the database', async () => {
