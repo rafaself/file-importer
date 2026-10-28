@@ -452,6 +452,10 @@
   color: #785828;
 }
 
+.retry-notice {
+  align-items: start;
+}
+
 .notice-error {
   border-color: #ebd0c8;
   background: #fff5f2;

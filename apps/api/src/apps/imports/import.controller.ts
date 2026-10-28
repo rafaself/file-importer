@@ -39,6 +39,14 @@ export class ImportController {
     return this.service.getImport(importId);
   }
 
+  @Post(':id/retry')
+  @HttpCode(HttpStatus.ACCEPTED)
+  async retryImport(
+    @Param('id', new ParseUUIDPipe({ version: '4' })) importId: string,
+  ) {
+    return this.service.retry(importId);
+  }
+
   @Get(':id/rows')
   async listImportRows(
     @Param('id', new ParseUUIDPipe({ version: '4' })) importId: string,

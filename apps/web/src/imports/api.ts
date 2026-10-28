@@ -121,6 +121,35 @@ export async function uploadImport(
   }
 }
 
+export async function retryImport(
+  importId: string,
+): Promise<ImportAcceptedResponseDto> {
+  let response: Response;
+  try {
+    response = await fetch(
+      `${API_BASE_URL}/imports/${encodeURIComponent(importId)}/retry`,
+      { method: "POST" },
+    );
+  } catch {
+    throw new ApiError("Could not reach the import API.");
+  }
+
+  const body = await readJson(response);
+  if (!response.ok) throw errorFromResponse(body, response.status);
+  if (response.status !== 202) {
+    throw new ApiError("The API did not accept the retry.", response.status);
+  }
+
+  try {
+    return importAcceptedResponseSchema.parse(body);
+  } catch {
+    throw new ApiError(
+      "The import API returned an unexpected response.",
+      response.status,
+    );
+  }
+}
+
 export function getImports(
   limit: number,
   offset: number,

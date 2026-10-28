@@ -7,11 +7,14 @@ import {
   ApiError,
   getImport,
   getImportRows,
+  retryImport,
   type RowStatusFilter,
 } from "./api";
 
 const ROWS_PER_PAGE = 10;
 const POLL_INTERVAL_MS = 2_500;
+const STALLED_POLL_INTERVAL_MS = 15_000;
+const PENDING_START_TIMEOUT_MS = 60_000;
 
 type ImportDetailsProps = {
   importId: string;
@@ -22,6 +25,15 @@ type RowStatus = RowStatusFilter;
 
 function isActive(status: string): boolean {
   return status === "pending" || status === "processing";
+}
+
+function isStalledPending(summary: ImportDetailResponseDto): boolean {
+  return (
+    summary.status === "pending" &&
+    summary.startedAt === null &&
+    Date.now() - new Date(summary.createdAt).getTime() >=
+      PENDING_START_TIMEOUT_MS
+  );
 }
 
 function formatDate(value: string | null): string {
@@ -197,7 +209,26 @@ export function ImportDetails({ importId, onClose }: ImportDetailsProps) {
     message: string;
   } | null>(null);
   const [refreshToken, setRefreshToken] = useState(0);
+  const [isRetrying, setIsRetrying] = useState(false);
+  const [retryFailure, setRetryFailure] = useState<string | null>(null);
   const summaryRef = useRef<ImportDetailResponseDto | null>(null);
+
+  async function handleRetry() {
+    setIsRetrying(true);
+    setRetryFailure(null);
+    try {
+      await retryImport(importId);
+      setRefreshToken((value) => value + 1);
+    } catch (reason) {
+      setRetryFailure(
+        reason instanceof ApiError
+          ? reason.message
+          : "The import could not be retried.",
+      );
+    } finally {
+      setIsRetrying(false);
+    }
+  }
 
   useEffect(() => {
     let disposed = false;
@@ -217,7 +248,12 @@ export function ImportDetails({ importId, onClose }: ImportDetailsProps) {
         setSummaryFailure(null);
         continuePolling = isActive(nextSummary.status);
         if (continuePolling) {
-          timer = window.setTimeout(loadSummary, POLL_INTERVAL_MS);
+          timer = window.setTimeout(
+            loadSummary,
+            isStalledPending(nextSummary)
+              ? STALLED_POLL_INTERVAL_MS
+              : POLL_INTERVAL_MS,
+          );
         }
       } catch (reason) {
         if (disposed || controller?.signal.aborted) return;
@@ -229,7 +265,12 @@ export function ImportDetails({ importId, onClose }: ImportDetailsProps) {
               : "Import details could not be loaded.",
         });
         if (continuePolling) {
-          timer = window.setTimeout(loadSummary, POLL_INTERVAL_MS * 2);
+          const previousSummary = summaryRef.current;
+          const pollInterval =
+            previousSummary && isStalledPending(previousSummary)
+              ? STALLED_POLL_INTERVAL_MS
+              : POLL_INTERVAL_MS * 2;
+          timer = window.setTimeout(loadSummary, pollInterval);
         }
       }
     };
@@ -244,6 +285,10 @@ export function ImportDetails({ importId, onClose }: ImportDetailsProps) {
 
   const visibleSummary =
     summaryResult?.importId === importId ? summaryResult.data : null;
+  const isStalled = visibleSummary ? isStalledPending(visibleSummary) : false;
+  const canRetry =
+    visibleSummary?.status === "failed" ||
+    (visibleSummary !== null && isStalled);
   const error =
     summaryFailure?.importId === importId ? summaryFailure.message : null;
   const isLoading = visibleSummary === null && error === null;
@@ -259,9 +304,14 @@ export function ImportDetails({ importId, onClose }: ImportDetailsProps) {
           : 0
         : Math.min(visibleSummary?.processedRows ?? 0, totalRows);
   const progressMax = totalRows === null || totalRows === 0 ? 1 : totalRows;
-  const progressLabel =
-    totalRows === null
-      ? "Counting rows"
+  const progressLabel = isStalled
+    ? "Waiting to start"
+    : totalRows === null
+      ? visibleSummary?.status === "failed"
+        ? visibleSummary.startedAt === null
+          ? "Processing did not start"
+          : "Row count unavailable"
+        : "Counting rows"
       : totalRows === 0
         ? completedWithNoRows
           ? "Complete · 0 rows"
@@ -298,6 +348,30 @@ export function ImportDetails({ importId, onClose }: ImportDetailsProps) {
         </div>
       )}
 
+      {isStalled && (
+        <div className="notice notice-warning retry-notice" role="status">
+          <strong>Import has not started</strong>
+          <span>
+            It has been waiting in the queue for over a minute. You can retry it
+            safely.
+          </span>
+          <button
+            className="button button-quiet"
+            type="button"
+            onClick={() => void handleRetry()}
+            disabled={isRetrying}
+          >
+            {isRetrying ? "Retrying…" : "Retry import"}
+          </button>
+        </div>
+      )}
+
+      {retryFailure && (
+        <p className="inline-error" role="alert">
+          {retryFailure}
+        </p>
+      )}
+
       {isLoading && !visibleSummary ? (
         <div className="details-loading" role="status">
           <span className="button-spinner" aria-hidden="true" />
@@ -322,7 +396,7 @@ export function ImportDetails({ importId, onClose }: ImportDetailsProps) {
           <div className="progress-block">
             <div className="progress-caption">
               <strong>{progressLabel}</strong>
-              {isActive(visibleSummary.status) && (
+              {isActive(visibleSummary.status) && !isStalled && (
                 <span className="live-indicator">Live</span>
               )}
             </div>
@@ -362,6 +436,16 @@ export function ImportDetails({ importId, onClose }: ImportDetailsProps) {
             <div className="notice notice-error detail-failure" role="status">
               <strong>Import could not be completed</strong>
               <span>{visibleSummary.failureReason}</span>
+              {canRetry && (
+                <button
+                  className="button button-quiet"
+                  type="button"
+                  onClick={() => void handleRetry()}
+                  disabled={isRetrying}
+                >
+                  {isRetrying ? "Retrying…" : "Retry import"}
+                </button>
+              )}
             </div>
           )}
 

@@ -166,7 +166,9 @@ export function ImportList({ selectedId, onSelect }: ImportListProps) {
                     <td>
                       <span className="row-count">
                         {record.totalRows === null
-                          ? "Counting…"
+                          ? record.status === "failed"
+                            ? "Not counted"
+                            : "Counting…"
                           : `${record.processedRows} / ${record.totalRows}`}
                       </span>
                       <span className="row-count-sub">

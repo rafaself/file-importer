@@ -8,6 +8,7 @@ import {
 } from '@csv/contracts';
 import { Import, ImportRow } from '@csv/database';
 import {
+  ConflictException,
   Inject,
   Injectable,
   Logger,
@@ -19,6 +20,7 @@ import { Queue } from 'bullmq';
 import {
   IMPORT_QUEUE,
   PROCESS_IMPORT_JOB,
+  ImportStatus,
   type ImportJobData,
 } from '@csv/shared';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -31,6 +33,8 @@ import path, { isAbsolute, relative, resolve } from 'node:path';
 @Injectable()
 export class ImportService {
   private readonly logger = new Logger(ImportService.name);
+  private readonly queueFailureReason =
+    'Import could not be queued. You can retry it.';
 
   constructor(
     @InjectRepository(Import)
@@ -145,25 +149,90 @@ export class ImportService {
 
   async enqueue(importId: string) {
     try {
-      await this.importQueue.add(
-        PROCESS_IMPORT_JOB,
-        { importId },
-        {
-          jobId: importId,
-          removeOnComplete: false,
-          removeOnFail: false,
-        },
-      );
+      await this.addQueueJob(importId);
     } catch (error) {
       this.logger.error(
         `Failed to enqueue import ${importId}`,
         error instanceof Error ? error.message : 'Unknown queue error',
       );
+      await this.markQueueFailure(importId);
       throw new ServiceUnavailableException({
         statusCode: 503,
         message: 'Import saved but queue submission failed.',
         id: importId,
       });
     }
+  }
+
+  async retry(importId: string) {
+    const record = await this.repository.findOneBy({ id: importId });
+    if (!record) throw new NotFoundException('Import was not found.');
+    if (
+      record.status !== ImportStatus.PENDING &&
+      record.status !== ImportStatus.FAILED
+    ) {
+      throw new ConflictException('Only pending or failed imports can retry.');
+    }
+
+    const job = await this.importQueue.getJob(importId);
+    const jobState = job ? await job.getState() : undefined;
+    if (
+      jobState !== undefined &&
+      jobState !== 'failed' &&
+      jobState !== 'completed'
+    ) {
+      throw new ConflictException('This import is already queued or running.');
+    }
+
+    try {
+      await this.repository.update(importId, {
+        status: ImportStatus.PENDING,
+        failureReason: null,
+        startedAt: null,
+        completedAt: null,
+      });
+
+      if (job && jobState) {
+        await job.retry(jobState);
+      } else {
+        await this.addQueueJob(importId);
+      }
+    } catch (error) {
+      this.logger.error(
+        `Failed to retry import ${importId}`,
+        error instanceof Error ? error.message : 'Unknown queue error',
+      );
+      await this.markQueueFailure(importId);
+      throw new ServiceUnavailableException({
+        statusCode: 503,
+        message: 'Import could not be queued. You can retry it again.',
+        id: importId,
+      });
+    }
+
+    return { id: importId, status: ImportStatus.PENDING };
+  }
+
+  private addQueueJob(importId: string) {
+    return this.importQueue.add(
+      PROCESS_IMPORT_JOB,
+      { importId },
+      {
+        jobId: importId,
+        removeOnComplete: false,
+        removeOnFail: false,
+      },
+    );
+  }
+
+  private markQueueFailure(importId: string) {
+    return this.repository.update(
+      { id: importId, status: ImportStatus.PENDING },
+      {
+        status: ImportStatus.FAILED,
+        failureReason: this.queueFailureReason,
+        completedAt: new Date(),
+      },
+    );
   }
 }
