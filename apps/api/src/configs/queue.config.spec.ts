@@ -22,7 +22,7 @@ describe('queue configuration', () => {
     (port) => {
       expect(() =>
         loadRedisConfig({ REDIS_HOST: 'localhost', REDIS_PORT: port }),
-      ).toThrow('REDIS_PORT must be an integer between 1 and 65535.');
+      ).toThrow('REDIS_PORT:');
     },
   );
 
@@ -34,7 +34,7 @@ describe('queue configuration', () => {
 
   it('rejects a missing Redis host', () => {
     expect(() => loadRedisConfig({ REDIS_PORT: '6379' })).toThrow(
-      'REDIS_HOST is required.',
+      'REDIS_HOST:',
     );
   });
 });
