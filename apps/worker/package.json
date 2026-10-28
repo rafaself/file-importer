@@ -23,16 +23,24 @@
     "test:e2e": "vitest run --config ./vitest.config.e2e.ts"
   },
   "dependencies": {
-    "@csv/contracts": "workspace:*",
     "@csv/config": "workspace:*",
+    "@csv/contracts": "workspace:*",
     "@csv/database": "workspace:*",
+    "@csv/shared": "workspace:*",
+    "@csv/storage": "workspace:*",
+    "@nestjs/bullmq": "12.0.0",
     "@nestjs/common": "^12.0.1",
+    "@nestjs/config": "12.0.1",
     "@nestjs/core": "^12.0.1",
     "@nestjs/platform-express": "^12.0.1",
+    "@nestjs/storage": "0.0.3",
     "@nestjs/typeorm": "12.0.2",
+    "bullmq": "6.5.0",
+    "ioredis": "5.11.1",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1",
-    "typeorm": "1.1.1"
+    "typeorm": "1.1.1",
+    "zod": "4.6.5"
   },
   "devDependencies": {
     "@nestjs/cli": "^12.0.0",
