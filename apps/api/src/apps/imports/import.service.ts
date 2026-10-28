@@ -1,7 +1,6 @@
 import { CreateImportDto } from '@csv/contracts';
-import { Import, ImportRepository } from '@csv/database';
+import { Import } from '@csv/database';
 import { Inject, Injectable } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { storageConfig } from '../../configs/storage.config.js';
@@ -45,6 +44,6 @@ export class ImportService {
   }
 
   async save(data: CreateImportDto) {
-    await this.repository.save(data);
+    return this.repository.save(data);
   }
 }

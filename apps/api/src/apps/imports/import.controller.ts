@@ -7,11 +7,7 @@ import {
 } from '@nestjs/common';
 import { ImportService } from './import.service.js';
 import { FileInterceptor } from '@nestjs/platform-express';
-import {
-  type StoredUpload,
-  UploadFileInfo,
-  uploadToDisk,
-} from '@nestjs/storage';
+import { type StoredUpload, uploadToDisk } from '@nestjs/storage';
 import { FILE_TYPES, MAX_FILE_SIZE } from '@csv/storage';
 import { detectCsvContentType } from './import.utils.js';
 
@@ -36,11 +32,11 @@ export class ImportController {
     }
 
     try {
-      await this.service.save({
+      const savedImport = await this.service.save({
         originalFileName: file.originalname,
         storageKey: file.key,
       });
-      return file;
+      return { id: savedImport.id, status: savedImport.status };
     } catch (err) {
       await this.service.deleteFile(file.key, file.disk!);
       throw err;
