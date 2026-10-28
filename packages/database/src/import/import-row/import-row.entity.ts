@@ -33,7 +33,7 @@ export class ImportRow {
   rowNumber: number;
 
   @Column({ type: "jsonb" })
-  rawValue: any;
+  rawValue: Record<string, string>;
 
   @Column({ type: "jsonb", default: () => "'[]'::jsonb" })
   issues: ImportRowIssue[];

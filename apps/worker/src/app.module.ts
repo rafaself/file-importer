@@ -4,7 +4,7 @@ import { ConfigModule } from '@nestjs/config';
 import { StorageModule } from '@nestjs/storage';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { IMPORT_QUEUE } from '@csv/shared';
-import { Import } from '@csv/database';
+import { Import, ImportRow } from '@csv/database';
 import { fileURLToPath } from 'node:url';
 import {
   buildWorkerDatabaseOptions,
@@ -13,6 +13,7 @@ import {
   workerConfig,
 } from './configs/worker.config.js';
 import { ImportProcessor } from './imports/import.processor.js';
+import { ImportProcessingService } from './imports/import-processing.service.js';
 
 @Module({
   imports: [
@@ -26,7 +27,7 @@ import { ImportProcessor } from './imports/import.processor.js';
       inject: [workerConfig.KEY],
       useFactory: buildWorkerDatabaseOptions,
     }),
-    TypeOrmModule.forFeature([Import]),
+    TypeOrmModule.forFeature([Import, ImportRow]),
     StorageModule.forRootAsync({
       inject: [workerConfig.KEY],
       useFactory: buildWorkerStorageOptions,
@@ -37,6 +38,6 @@ import { ImportProcessor } from './imports/import.processor.js';
     }),
     BullModule.registerQueue({ name: IMPORT_QUEUE }),
   ],
-  providers: [ImportProcessor],
+  providers: [ImportProcessor, ImportProcessingService],
 })
 export class AppModule {}

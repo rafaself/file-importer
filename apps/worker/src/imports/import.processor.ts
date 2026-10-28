@@ -1,13 +1,9 @@
-import { Import } from '@csv/database';
-import { IMPORT_QUEUE, PROCESS_IMPORT_JOB, ImportRowStatus } from '@csv/shared';
+import { IMPORT_QUEUE, PROCESS_IMPORT_JOB } from '@csv/shared';
 import { Processor, WorkerHost } from '@nestjs/bullmq';
 import { Logger } from '@nestjs/common';
-import { InjectDisk, StorageDisk } from '@nestjs/storage';
-import { InjectRepository } from '@nestjs/typeorm';
 import type { Job } from 'bullmq';
-import { Repository } from 'typeorm';
 import z from 'zod';
-import { parseCustomerRows } from './csv-parser.js';
+import { ImportProcessingService } from './import-processing.service.js';
 
 const importJobSchema = z.strictObject({ importId: z.uuid() });
 
@@ -15,12 +11,7 @@ const importJobSchema = z.strictObject({ importId: z.uuid() });
 export class ImportProcessor extends WorkerHost {
   private readonly logger = new Logger(ImportProcessor.name);
 
-  constructor(
-    @InjectRepository(Import)
-    private readonly imports: Repository<Import>,
-    @InjectDisk('private')
-    private readonly sourceDisk: StorageDisk,
-  ) {
+  constructor(private readonly processing: ImportProcessingService) {
     super();
   }
 
@@ -37,21 +28,10 @@ export class ImportProcessor extends WorkerHost {
     const { importId } = result.data;
     this.logger.log(`Received import ${importId}.`);
 
-    const record = await this.imports.findOneBy({ id: importId });
-    if (!record) {
-      throw new Error(`Import ${importId} was not found.`);
-    }
-
-    const source = await this.sourceDisk.get(record.storageKey);
-    let validRows = 0;
-    let invalidRows = 0;
-    for await (const row of parseCustomerRows(source.body)) {
-      if (row.status === ImportRowStatus.VALID) validRows++;
-      else invalidRows++;
-    }
+    const counts = await this.processing.processImport(importId);
 
     this.logger.log(
-      `Validated import ${importId}: ${validRows + invalidRows} rows (${validRows} valid, ${invalidRows} invalid).`,
+      `Processed import ${importId}: ${counts.processedRows} rows (${counts.successRows} valid, ${counts.failedRows} invalid).`,
     );
   }
 }

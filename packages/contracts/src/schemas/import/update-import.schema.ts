@@ -10,7 +10,7 @@ export const updateImportSchema = createImportSchema
   })
   .extend({
     status: z.enum(ImportStatus),
-    totalRows: z.number().min(1).max(MAX_ROWS),
+    totalRows: z.number().min(0).max(MAX_ROWS),
     processedRows: z.number().min(0).max(MAX_ROWS),
     successRows: z.number().min(0).max(MAX_ROWS),
     failedRows: z.number().min(0).max(MAX_ROWS),
