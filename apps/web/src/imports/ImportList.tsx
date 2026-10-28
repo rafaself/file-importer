@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import type { ImportListResponseDto } from "@csv/contracts";
 import { importPath, isPlainLeftClick } from "../navigation";
 import { ApiError, getImports } from "./api";
+import { formatDate, formatStatusLabel } from "./format";
 
 const PAGE_SIZE = 20;
 
@@ -19,17 +20,6 @@ type ListFailure = {
   key: string;
   message: string;
 };
-
-function formatDate(value: string): string {
-  return new Intl.DateTimeFormat(undefined, {
-    dateStyle: "medium",
-    timeStyle: "short",
-  }).format(new Date(value));
-}
-
-function statusLabel(status: string): string {
-  return status.charAt(0).toUpperCase() + status.slice(1);
-}
 
 export function ImportList({ onOpen, onRequestImport }: ImportListProps) {
   const [result, setResult] = useState<ListResult | null>(null);
@@ -167,7 +157,7 @@ export function ImportList({ onOpen, onRequestImport }: ImportListProps) {
                     <td>
                       <span className={`status-pill status-${record.status}`}>
                         <span className="status-dot" aria-hidden="true" />
-                        {statusLabel(record.status)}
+                        {formatStatusLabel(record.status)}
                       </span>
                     </td>
                     <td>

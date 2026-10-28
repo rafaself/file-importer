@@ -30,7 +30,6 @@ function App() {
     const current = readRoute();
     if (current.name === "import" && current.legacy) {
       window.history.replaceState({}, "", importPath(current.id));
-      setRoute({ name: "import", id: current.id });
     }
   }, []);
 

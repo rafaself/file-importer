@@ -1,57 +1,37 @@
 import { useEffect, useRef, useState, type MouseEvent } from "react";
-import type {
-  ImportDetailResponseDto,
-  ImportRowsPageResponseDto,
-} from "@csv/contracts";
+import type { ImportRowsPageResponseDto } from "@csv/contracts";
 import { isPlainLeftClick } from "../navigation";
+import { ApiError, getImportRows, retryImport } from "./api";
+import { formatDate, formatDuration, formatStatusLabel } from "./format";
+import { downloadNeedsReviewCsv, fetchNeedsReviewRows } from "./needsReviewCsv";
 import {
-  ApiError,
-  getImport,
-  getImportRows,
-  retryImport,
-  type RowStatusFilter,
-} from "./api";
+  isActiveStatus,
+  isStalledImport,
+  useImportPolling,
+} from "./useImportPolling";
+import { useNow } from "./useNow";
 
 const ROWS_PER_PAGE = 10;
-const POLL_INTERVAL_MS = 2_500;
-const STALLED_POLL_INTERVAL_MS = 15_000;
-const PENDING_START_TIMEOUT_MS = 60_000;
 
 type ImportDetailsProps = {
   importId: string;
   onBack: () => void;
 };
 
-type RowStatus = RowStatusFilter;
-
-function isActive(status: string): boolean {
-  return status === "pending" || status === "processing";
+function cellValue(value: string | undefined): string {
+  return value || "—";
 }
 
-function isStalledPending(summary: ImportDetailResponseDto): boolean {
-  return (
-    summary.status === "pending" &&
-    summary.startedAt === null &&
-    Date.now() - new Date(summary.createdAt).getTime() >=
-      PENDING_START_TIMEOUT_MS
-  );
+function issuesToTitle(issues: { field: string; message: string }[]) {
+  if (issues.length === 0) return undefined;
+  return issues.map((issue) => `${issue.field}: ${issue.message}`).join("\n");
 }
 
-function formatDate(value: string | null): string {
-  if (!value) return "—";
-  return new Intl.DateTimeFormat(undefined, {
-    dateStyle: "medium",
-    timeStyle: "short",
-  }).format(new Date(value));
-}
-
-function ImportRowsSection({
+function ImportRowsTable({
   importId,
-  status,
   processedRows,
 }: {
   importId: string;
-  status: RowStatus;
   processedRows: number;
 }) {
   const [offset, setOffset] = useState(0);
@@ -63,14 +43,14 @@ function ImportRowsSection({
     key: string;
     message: string;
   } | null>(null);
-  const requestKey = `${importId}:${status}:${offset}:${processedRows}`;
+  const requestKey = `${importId}:${offset}:${processedRows}`;
 
   useEffect(() => {
     const controller = new AbortController();
 
     void getImportRows(
       importId,
-      { status, limit: ROWS_PER_PAGE, offset },
+      { limit: ROWS_PER_PAGE, offset },
       controller.signal,
     )
       .then((page) => {
@@ -89,90 +69,67 @@ function ImportRowsSection({
       });
 
     return () => controller.abort();
-  }, [importId, offset, processedRows, requestKey, status]);
+  }, [importId, offset, processedRows, requestKey]);
 
   const currentResult = result?.key === requestKey ? result.data : null;
   const visibleResult = currentResult ?? result?.data ?? null;
   const rows = visibleResult?.items ?? [];
   const page = visibleResult?.page;
   const error = failure?.key === requestKey ? failure.message : null;
-  const isLoading = currentResult === null && error === null;
+  const rowsLoading = currentResult === null && error === null;
+  const totalPages = page ? Math.ceil(page.total / ROWS_PER_PAGE) : null;
+  const currentPage = Math.floor(offset / ROWS_PER_PAGE) + 1;
 
   return (
-    <section
-      className={`rows-panel rows-${status}`}
-      aria-labelledby={`${status}-rows-title`}
-      aria-busy={isLoading}
-    >
-      <div className="rows-panel-heading">
-        <div className="rows-heading-title">
-          <span
-            className={`row-status-mark row-mark-${status}`}
-            aria-hidden="true"
-          >
-            {status === "valid" ? "✓" : "!"}
-          </span>
-          <div>
-            <h3 id={`${status}-rows-title`}>
-              {status === "valid" ? "Valid rows" : "Rows to review"}
-            </h3>
-            <p>{page?.total ?? "—"} records</p>
-          </div>
-        </div>
-        {page && page.total > 0 && (
-          <span className="rows-page-label">
-            {page.offset + 1}–{Math.min(page.offset + page.limit, page.total)}{" "}
-            of {page.total}
-          </span>
-        )}
-      </div>
-
+    <div className="panel rows-table-panel" aria-busy={rowsLoading}>
       {error && (
-        <p className="inline-error compact-error" role="alert">
+        <p className="inline-error" role="alert">
           {error}
         </p>
       )}
-      {isLoading && !visibleResult ? (
+      {rowsLoading && !visibleResult ? (
         <div className="rows-loading" role="status">
           <span className="button-spinner" aria-hidden="true" />
           Loading rows…
         </div>
       ) : !visibleResult ? null : rows.length === 0 ? (
-        <p className="rows-empty">
-          {status === "valid" ? "No valid rows yet." : "No rows need review."}
-        </p>
+        <p className="rows-empty">No rows recorded yet.</p>
       ) : (
-        <div className="row-cards">
-          {rows.map((row) => (
-            <article className="row-card" key={row.rowNumber}>
-              <div className="row-card-heading">
-                <strong>Record {row.rowNumber}</strong>
-                <span className={`status-pill status-${row.status}`}>
-                  <span className="status-dot" aria-hidden="true" />
-                  {row.status}
-                </span>
-              </div>
-              <dl className="raw-values">
-                {Object.entries(row.rawValue).map(([field, value]) => (
-                  <div className="raw-value" key={field}>
-                    <dt>{field}</dt>
-                    <dd>
-                      {value || <span className="empty-value">Empty</span>}
-                    </dd>
-                  </div>
-                ))}
-              </dl>
-              {row.issues.length > 0 && (
-                <ul className="row-issues">
-                  {row.issues.map((issue, index) => (
-                    <li key={`${issue.field}-${index}`}>
-                      <strong>{issue.field || "Row"}:</strong> {issue.message}
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </article>
-          ))}
+        <div className="rows-table-wrap">
+          <table className="rows-table">
+            <thead>
+              <tr>
+                <th scope="col">Name</th>
+                <th scope="col">Email</th>
+                <th scope="col">Company</th>
+                <th scope="col">Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((row) => (
+                <tr key={row.rowNumber}>
+                  <td title={cellValue(row.rawValue.name)}>
+                    {cellValue(row.rawValue.name)}
+                  </td>
+                  <td title={cellValue(row.rawValue.email)}>
+                    {cellValue(row.rawValue.email)}
+                  </td>
+                  <td title={cellValue(row.rawValue.company)}>
+                    {cellValue(row.rawValue.company)}
+                  </td>
+                  <td>
+                    <span
+                      className={`status-pill status-${row.status}`}
+                      title={issuesToTitle(row.issues)}
+                    >
+                      <span className="status-dot" aria-hidden="true" />
+                      {formatStatusLabel(row.status)}
+                    </span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
 
@@ -181,45 +138,68 @@ function ImportRowsSection({
           <button
             className="button button-quiet"
             type="button"
-            disabled={offset === 0 || isLoading}
+            disabled={offset === 0 || rowsLoading}
             onClick={() => setOffset(Math.max(0, offset - ROWS_PER_PAGE))}
           >
             Previous
           </button>
+          <span className="rows-page-info">
+            Page {currentPage} of {totalPages}
+          </span>
           <button
             className="button button-quiet"
             type="button"
-            disabled={offset + ROWS_PER_PAGE >= page.total || isLoading}
+            disabled={offset + ROWS_PER_PAGE >= page.total || rowsLoading}
             onClick={() => setOffset(offset + ROWS_PER_PAGE)}
           >
             Next
           </button>
         </div>
       )}
-    </section>
+    </div>
   );
 }
 
 export function ImportDetails({ importId, onBack }: ImportDetailsProps) {
-  const [summaryResult, setSummaryResult] = useState<{
-    importId: string;
-    data: ImportDetailResponseDto;
-  } | null>(null);
-  const [summaryFailure, setSummaryFailure] = useState<{
-    importId: string;
-    message: string;
-  } | null>(null);
-  const [refreshToken, setRefreshToken] = useState(0);
+  const { summary, failure, isLoading, refresh } = useImportPolling(importId);
   const [isRetrying, setIsRetrying] = useState(false);
   const [retryFailure, setRetryFailure] = useState<string | null>(null);
-  const summaryRef = useRef<ImportDetailResponseDto | null>(null);
+  const [isExporting, setIsExporting] = useState(false);
+  const [exportFailure, setExportFailure] = useState<string | null>(null);
+  const exportControllerRef = useRef<AbortController | null>(null);
+
+  useEffect(() => () => exportControllerRef.current?.abort(), []);
+
+  const active = summary ? isActiveStatus(summary.status) : false;
+  const now = useNow(active);
+  const isStalled = summary ? isStalledImport(summary, now) : false;
+  const canRetry =
+    summary?.status === "failed" || (summary !== null && isStalled);
+  const isMissing = failure?.status === 404;
+  const duration = summary?.startedAt
+    ? formatDuration(summary.startedAt, summary.completedAt, now)
+    : null;
+
+  const fileName = summary?.originalFileName;
+  const status = summary?.status;
+
+  useEffect(() => {
+    if (fileName === undefined || status === undefined) return;
+    const previousTitle = document.title;
+    document.title = isActiveStatus(status)
+      ? `${formatStatusLabel(status)} · ${fileName} · File Importer`
+      : `${fileName} · File Importer`;
+    return () => {
+      document.title = previousTitle;
+    };
+  }, [fileName, status]);
 
   async function handleRetry() {
     setIsRetrying(true);
     setRetryFailure(null);
     try {
       await retryImport(importId);
-      setRefreshToken((value) => value + 1);
+      refresh();
     } catch (reason) {
       setRetryFailure(
         reason instanceof ApiError
@@ -231,71 +211,61 @@ export function ImportDetails({ importId, onBack }: ImportDetailsProps) {
     }
   }
 
-  useEffect(() => {
-    let disposed = false;
-    let timer: number | undefined;
-    let controller: AbortController | undefined;
-    let continuePolling =
-      summaryRef.current?.id === importId &&
-      isActive(summaryRef.current.status);
+  async function handleExport() {
+    const controller = new AbortController();
+    exportControllerRef.current = controller;
+    setIsExporting(true);
+    setExportFailure(null);
+    try {
+      const invalidRows = await fetchNeedsReviewRows(
+        importId,
+        controller.signal,
+      );
+      if (controller.signal.aborted || invalidRows.length === 0) return;
+      downloadNeedsReviewCsv(
+        summary?.originalFileName ?? "import",
+        invalidRows,
+      );
+    } catch (reason) {
+      if (controller.signal.aborted) return;
+      setExportFailure(
+        reason instanceof ApiError
+          ? reason.message
+          : "The rows could not be exported.",
+      );
+    } finally {
+      if (!controller.signal.aborted) setIsExporting(false);
+    }
+  }
 
-    const loadSummary = async () => {
-      controller = new AbortController();
-      try {
-        const nextSummary = await getImport(importId, controller.signal);
-        if (disposed) return;
-        summaryRef.current = nextSummary;
-        setSummaryResult({ importId, data: nextSummary });
-        setSummaryFailure(null);
-        continuePolling = isActive(nextSummary.status);
-        if (continuePolling) {
-          timer = window.setTimeout(
-            loadSummary,
-            isStalledPending(nextSummary)
-              ? STALLED_POLL_INTERVAL_MS
-              : POLL_INTERVAL_MS,
-          );
-        }
-      } catch (reason) {
-        if (disposed || controller?.signal.aborted) return;
-        setSummaryFailure({
-          importId,
-          message:
-            reason instanceof ApiError
-              ? reason.message
-              : "Import details could not be loaded.",
-        });
-        if (continuePolling) {
-          const previousSummary = summaryRef.current;
-          const pollInterval =
-            previousSummary && isStalledPending(previousSummary)
-              ? STALLED_POLL_INTERVAL_MS
-              : POLL_INTERVAL_MS * 2;
-          timer = window.setTimeout(loadSummary, pollInterval);
-        }
-      }
-    };
+  function handleBack(event: MouseEvent<HTMLAnchorElement>) {
+    if (!isPlainLeftClick(event)) return;
+    event.preventDefault();
+    onBack();
+  }
 
-    void loadSummary();
-    return () => {
-      disposed = true;
-      if (timer !== undefined) window.clearTimeout(timer);
-      controller?.abort();
-    };
-  }, [importId, refreshToken]);
+  if (summary === null && isMissing) {
+    return (
+      <div className="details-page">
+        <a className="back-link" href="/" onClick={handleBack}>
+          <span aria-hidden="true">←</span>
+          Imports
+        </a>
+        <section className="panel not-found">
+          <h1>Import not found</h1>
+          <p>{failure?.message ?? "That import does not exist."}</p>
+          <a className="text-button" href="/" onClick={handleBack}>
+            Back to imports
+          </a>
+        </section>
+      </div>
+    );
+  }
 
-  const visibleSummary =
-    summaryResult?.importId === importId ? summaryResult.data : null;
-  const isStalled = visibleSummary ? isStalledPending(visibleSummary) : false;
-  const canRetry =
-    visibleSummary?.status === "failed" ||
-    (visibleSummary !== null && isStalled);
-  const error =
-    summaryFailure?.importId === importId ? summaryFailure.message : null;
-  const isLoading = visibleSummary === null && error === null;
-  const totalRows = visibleSummary?.totalRows ?? null;
+  const totalRows = summary?.totalRows ?? null;
+  const processedRows = summary?.processedRows ?? 0;
   const completedWithNoRows =
-    visibleSummary?.status === "completed" && totalRows === 0;
+    summary?.status === "completed" && totalRows === 0;
   const progressValue =
     totalRows === null
       ? undefined
@@ -303,13 +273,13 @@ export function ImportDetails({ importId, onBack }: ImportDetailsProps) {
         ? completedWithNoRows
           ? 1
           : 0
-        : Math.min(visibleSummary?.processedRows ?? 0, totalRows);
+        : Math.min(processedRows, totalRows);
   const progressMax = totalRows === null || totalRows === 0 ? 1 : totalRows;
   const progressLabel = isStalled
     ? "Waiting to start"
     : totalRows === null
-      ? visibleSummary?.status === "failed"
-        ? visibleSummary.startedAt === null
+      ? summary?.status === "failed"
+        ? summary?.startedAt === null
           ? "Processing did not start"
           : "Row count unavailable"
         : "Counting rows"
@@ -317,13 +287,7 @@ export function ImportDetails({ importId, onBack }: ImportDetailsProps) {
         ? completedWithNoRows
           ? "Complete · 0 rows"
           : "0 rows identified"
-        : `${visibleSummary?.processedRows ?? 0} of ${totalRows} rows · ${Math.round(((visibleSummary?.processedRows ?? 0) / totalRows) * 100)}%`;
-
-  function handleBack(event: MouseEvent<HTMLAnchorElement>) {
-    if (!isPlainLeftClick(event)) return;
-    event.preventDefault();
-    onBack();
-  }
+        : `${processedRows} of ${totalRows} rows · ${Math.round((processedRows / totalRows) * 100)}%`;
 
   return (
     <div className="details-page">
@@ -332,14 +296,10 @@ export function ImportDetails({ importId, onBack }: ImportDetailsProps) {
         Imports
       </a>
 
-      {error && (
+      {failure && !isMissing && (
         <div className="inline-error" role="alert">
-          <span>{error}</span>
-          <button
-            className="text-button"
-            type="button"
-            onClick={() => setRefreshToken((value) => value + 1)}
-          >
+          <span>{failure.message}</span>
+          <button className="text-button" type="button" onClick={refresh}>
             Try again
           </button>
         </div>
@@ -369,12 +329,12 @@ export function ImportDetails({ importId, onBack }: ImportDetailsProps) {
         </p>
       )}
 
-      {isLoading && !visibleSummary ? (
+      {isLoading && !summary ? (
         <div className="panel details-loading" role="status">
           <span className="button-spinner" aria-hidden="true" />
           Loading import…
         </div>
-      ) : visibleSummary ? (
+      ) : summary ? (
         <>
           <section
             className="panel details-summary"
@@ -386,38 +346,41 @@ export function ImportDetails({ importId, onBack }: ImportDetailsProps) {
               </div>
               <div className="detail-file-text">
                 <p className="eyebrow">Import</p>
-                <h1 id="details-title">{visibleSummary.originalFileName}</h1>
-                <span>Created {formatDate(visibleSummary.createdAt)}</span>
+                <h1 id="details-title">{summary.originalFileName}</h1>
+                <span>Created {formatDate(summary.createdAt)}</span>
               </div>
-              <span className={`status-pill status-${visibleSummary.status}`}>
+              <span className={`status-pill status-${summary.status}`}>
                 <span className="status-dot" aria-hidden="true" />
-                {visibleSummary.status}
+                {formatStatusLabel(summary.status)}
               </span>
             </div>
 
             <div className="progress-block">
               <div className="progress-caption">
                 <strong>{progressLabel}</strong>
-                {isActive(visibleSummary.status) && !isStalled && (
+                {active && !isStalled && (
                   <span className="live-indicator">Live</span>
                 )}
               </div>
               <progress
+                className={
+                  summary.status === "failed" ? "progress-failed" : undefined
+                }
                 aria-label="Import progress"
                 max={progressMax}
                 value={progressValue}
               />
               <div className="summary-counts">
                 <div>
-                  <strong>{visibleSummary.processedRows}</strong>
+                  <strong>{summary.processedRows}</strong>
                   <span>Processed</span>
                 </div>
                 <div>
-                  <strong>{visibleSummary.successRows}</strong>
+                  <strong>{summary.successRows}</strong>
                   <span>Valid</span>
                 </div>
                 <div>
-                  <strong>{visibleSummary.failedRows}</strong>
+                  <strong>{summary.failedRows}</strong>
                   <span>Needs review</span>
                 </div>
               </div>
@@ -426,18 +389,22 @@ export function ImportDetails({ importId, onBack }: ImportDetailsProps) {
             <dl className="detail-metadata">
               <div>
                 <dt>Started</dt>
-                <dd>{formatDate(visibleSummary.startedAt)}</dd>
+                <dd>{formatDate(summary.startedAt)}</dd>
               </div>
               <div>
                 <dt>Finished</dt>
-                <dd>{formatDate(visibleSummary.completedAt)}</dd>
+                <dd>{formatDate(summary.completedAt)}</dd>
+              </div>
+              <div>
+                <dt>Duration</dt>
+                <dd>{duration ?? "—"}</dd>
               </div>
             </dl>
 
-            {visibleSummary.failureReason && (
+            {summary.failureReason && (
               <div className="notice notice-error detail-failure" role="status">
                 <strong>Import could not be completed</strong>
-                <span>{visibleSummary.failureReason}</span>
+                <span>{summary.failureReason}</span>
                 {canRetry && (
                   <button
                     className="button button-quiet"
@@ -459,27 +426,39 @@ export function ImportDetails({ importId, onBack }: ImportDetailsProps) {
             <div className="row-results-heading">
               <div>
                 <p className="eyebrow">Row outcomes</p>
-                <h2 id="row-outcomes-title">Review the records</h2>
+                <h2 id="row-outcomes-title">All records</h2>
               </div>
-              <span className="row-results-count">
-                {visibleSummary.failedRows} to review
-              </span>
+              <div className="row-results-actions">
+                <span className="row-results-count">
+                  {summary.successRows} valid · {summary.failedRows} to review
+                </span>
+                <button
+                  className="button button-quiet"
+                  type="button"
+                  onClick={() => void handleExport()}
+                  disabled={isExporting || summary.failedRows === 0}
+                  aria-label="Download all rows to review as a CSV file"
+                >
+                  {isExporting ? (
+                    <span className="button-spinner" aria-hidden="true" />
+                  ) : (
+                    <span aria-hidden="true">↓</span>
+                  )}
+                  {isExporting ? "Preparing…" : "Export"}
+                </button>
+              </div>
             </div>
 
-            <div className="row-results-grid">
-              <ImportRowsSection
-                key={`${importId}-valid`}
-                importId={importId}
-                status="valid"
-                processedRows={visibleSummary.processedRows}
-              />
-              <ImportRowsSection
-                key={`${importId}-invalid`}
-                importId={importId}
-                status="invalid"
-                processedRows={visibleSummary.processedRows}
-              />
-            </div>
+            {exportFailure && (
+              <p className="inline-error row-results-error" role="alert">
+                {exportFailure}
+              </p>
+            )}
+
+            <ImportRowsTable
+              importId={importId}
+              processedRows={summary.processedRows}
+            />
           </section>
         </>
       ) : null}
