@@ -4,6 +4,7 @@ export class Init1791061090989 implements MigrationInterface {
   name = "Init1791061090989";
 
   public async up(queryRunner: QueryRunner): Promise<void> {
+    await queryRunner.query(`CREATE EXTENSION IF NOT EXISTS "uuid-ossp"`);
     await queryRunner.query(
       `CREATE TYPE "public"."import_rows_status_enum" AS ENUM('valid', 'invalid', 'pending')`,
     );

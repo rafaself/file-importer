@@ -1,38 +1,98 @@
+x-app-environment: &app-environment
+  DATABASE_URL: postgres://${POSTGRES_USER:-csv}:${POSTGRES_PW:-csv}@postgres:5432/${POSTGRES_DB:-csv_importer}
+  REDIS_HOST: redis
+  REDIS_PORT: "6379"
+  API_HOST: localhost
+  API_PORT: "3010"
+  API_URL: http://localhost:3010
+  STORAGE_DRIVER: local
+  STORAGE_ROOT: /data/files
+  SIGNING_KEY: ${SIGNING_KEY:-change-me}
+  BASE_URL: http://localhost:3010/files
+
 services:
+  postgres:
+    container_name: db
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-csv}
+      POSTGRES_PASSWORD: ${POSTGRES_PW:-csv}
+      POSTGRES_DB: ${POSTGRES_DB:-csv_importer}
+    ports:
+      - "54321:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
   redis:
-    image: "redislabs/redismod"
+    image: redis:7-alpine
     ports:
       - "6379:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
-      interval: 1m30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
-      start_interval: 5s
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
 
-  postgres:
-    container_name: db
-    image: postgres:latest
-    environment:
-      - POSTGRES_USER=${POSTGRES_USER}
-      - POSTGRES_PASSWORD=${POSTGRES_PW}
-      - POSTGRES_DB=${POSTGRES_DB}
+  migrate:
+    build:
+      context: .
+      target: api
+    command: ["node", "packages/database/dist/migrate.js"]
+    environment: *app-environment
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    build:
+      context: .
+      target: api
+    environment: *app-environment
     ports:
-      - "54321:5432"
-    restart: always
-    healthcheck:
-      test: ["CMD", "pg_isready", "-U", "csv", "-d", "csv_importer"]
-      interval: 1m30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
-      start_interval: 5s
+      - "3010:3010"
+    volumes:
+      - files:/data/files
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
 
-networks:
-  default:
-    driver: bridge
-    ipam:
-      config:
-        - subnet: 172.26.0.0/16
-          gateway: 172.26.0.1
+  worker:
+    build:
+      context: .
+      target: worker
+    environment: *app-environment
+    volumes:
+      - files:/data/files
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  web:
+    build:
+      context: .
+      target: web
+      args:
+        VITE_API_BASE_URL: http://localhost:3010
+    ports:
+      - "5173:80"
+    depends_on:
+      - api
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  files:
