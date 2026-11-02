@@ -20,24 +20,20 @@ import {
   controllers: [AppController],
   imports: [
     ImportModule,
-
     ConfigModule.forRoot({
       envFilePath: '../../.env',
       expandVariables: true,
       isGlobal: true,
       load: [apiConfig, databaseConfig, storageConfig, queueConfig],
     }),
-
     TypeOrmModule.forRootAsync({
       inject: [databaseConfig.KEY],
       useFactory: buildDatabaseOptions,
     }),
-
     BullModule.forRootAsync({
       inject: [queueConfig.KEY],
       useFactory: buildQueueOptions,
     }),
-
     StorageModule.forRootAsync({
       inject: [storageConfig.KEY],
       useFactory: buildStorageOptions,

@@ -53,9 +53,11 @@ export class ImportController {
     @Query() query: unknown,
   ) {
     const result = importRowsQuerySchema.safeParse(query);
+
     if (!result.success) {
       throw new BadRequestException('Invalid import row query.');
     }
+
     return this.service.listImportRows(importId, result.data);
   }
 
@@ -88,6 +90,7 @@ export class ImportController {
     }
 
     await this.service.enqueue(savedImport.id);
+
     return { id: savedImport.id, status: savedImport.status };
   }
 }

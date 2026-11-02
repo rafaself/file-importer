@@ -155,7 +155,9 @@ export class ImportService {
         `Failed to enqueue import ${importId}`,
         error instanceof Error ? error.message : 'Unknown queue error',
       );
+
       await this.markQueueFailure(importId);
+
       throw new ServiceUnavailableException({
         statusCode: 503,
         message: 'Import saved but queue submission failed.',
