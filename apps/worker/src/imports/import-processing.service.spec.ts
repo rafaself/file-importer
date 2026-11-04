@@ -14,7 +14,11 @@ function createService(csv: string) {
   });
   const imports = {
     findOneBy: vi.fn().mockResolvedValue(record),
-    update: vi.fn().mockResolvedValue({ affected: 1 }),
+    findOneOrFail: vi.fn().mockResolvedValue(record),
+    update: vi.fn().mockImplementation(async (_id, values) => {
+      Object.assign(record, values);
+      return { affected: 1 };
+    }),
   };
   const persistedRows = new Map<number, ImportRow>();
   const queryBuilder = {
@@ -34,6 +38,12 @@ function createService(csv: string) {
     }),
   };
   const rows = {
+    find: vi.fn().mockImplementation(async ({ where }) =>
+      (where.rowNumber.value as number[]).flatMap((rowNumber) => {
+        const row = persistedRows.get(rowNumber);
+        return row ? [{ rowNumber: row.rowNumber, status: row.status }] : [];
+      }),
+    ),
     create: vi.fn((row) => row),
     upsert: vi.fn().mockImplementation(async (batch: ImportRow[]) => {
       for (const row of batch) persistedRows.set(row.rowNumber, row);
@@ -72,6 +82,8 @@ function createService(csv: string) {
     sourceDisk,
     record,
     sourceStreams,
+    persistedRows,
+    queryBuilder,
   };
 }
 
@@ -145,6 +157,127 @@ describe('ImportProcessingService', () => {
         failedRows: 1,
       }),
     );
+  });
+
+  it('updates progress across batches without recounting all persisted rows', async () => {
+    const csv = [
+      'name,email,company',
+      ...Array.from(
+        { length: 250 },
+        (_, index) =>
+          `Customer,${index % 2 === 0 ? 'valid@example.com' : 'invalid'},Example`,
+      ),
+    ].join('\n');
+    const { service, imports, rows, queryBuilder } = createService(csv);
+
+    await expect(service.processImport(importId)).resolves.toEqual({
+      processedRows: 250,
+      successRows: 125,
+      failedRows: 125,
+    });
+
+    expect(rows.upsert).toHaveBeenCalledTimes(3);
+    expect(
+      rows.find.mock.calls.map(
+        ([options]) => options.where.rowNumber.value.length,
+      ),
+    ).toEqual([100, 100, 50]);
+    expect(imports.update).toHaveBeenNthCalledWith(3, importId, {
+      processedRows: 100,
+      successRows: 50,
+      failedRows: 50,
+    });
+    expect(imports.update).toHaveBeenNthCalledWith(4, importId, {
+      processedRows: 200,
+      successRows: 100,
+      failedRows: 100,
+    });
+    // Reconcile once at startup and once at completion, regardless of batch count.
+    expect(queryBuilder.getRawMany).toHaveBeenCalledTimes(2);
+    expect(imports.findOneOrFail).toHaveBeenCalledTimes(3);
+    expect(imports.findOneOrFail).toHaveBeenCalledWith({
+      where: { id: importId },
+      lock: { mode: 'pessimistic_write' },
+    });
+  });
+
+  it('replaces existing statuses and preserves rows outside the current batch on retry', async () => {
+    const csv = [
+      'name,email,company',
+      ...Array.from(
+        { length: 201 },
+        (_, index) =>
+          `Customer,${index === 0 ? 'invalid' : 'valid@example.com'},Example`,
+      ),
+    ].join('\n');
+    const { service, imports, persistedRows, queryBuilder } =
+      createService(csv);
+    for (const [rowNumber, status] of [
+      [1, ImportRowStatus.VALID],
+      [2, ImportRowStatus.INVALID],
+      [3, ImportRowStatus.PENDING],
+      [201, ImportRowStatus.VALID],
+    ] as const) {
+      persistedRows.set(
+        rowNumber,
+        Object.assign(new ImportRow(), { rowNumber, status }),
+      );
+    }
+
+    const expectedCounts = {
+      processedRows: 201,
+      successRows: 200,
+      failedRows: 1,
+    };
+    await expect(service.processImport(importId)).resolves.toEqual(
+      expectedCounts,
+    );
+    expect(imports.update).toHaveBeenNthCalledWith(3, importId, {
+      processedRows: 101,
+      successRows: 100,
+      failedRows: 1,
+    });
+    expect(persistedRows.size).toBe(201);
+
+    await expect(service.processImport(importId)).resolves.toEqual(
+      expectedCounts,
+    );
+    expect(persistedRows.size).toBe(201);
+    expect(queryBuilder.getRawMany).toHaveBeenCalledTimes(4);
+  });
+
+  it('reconciles persisted progress after a batch fails and can retry', async () => {
+    const csv = [
+      'name,email,company',
+      ...Array.from(
+        { length: 101 },
+        () => 'Customer,valid@example.com,Example',
+      ),
+    ].join('\n');
+    const { service, imports, rows } = createService(csv);
+    const persist = rows.upsert.getMockImplementation()!;
+    rows.upsert
+      .mockImplementationOnce(persist)
+      .mockRejectedValueOnce(new Error('database error'));
+
+    await expect(service.processImport(importId)).rejects.toThrow(
+      'Import processing failed.',
+    );
+    expect(imports.update).toHaveBeenLastCalledWith(
+      importId,
+      expect.objectContaining({
+        status: ImportStatus.FAILED,
+        processedRows: 100,
+        successRows: 100,
+        failedRows: 0,
+      }),
+    );
+
+    await expect(service.processImport(importId)).resolves.toEqual({
+      processedRows: 101,
+      successRows: 101,
+      failedRows: 0,
+    });
   });
 
   it('marks file-level parser errors failed and throws a bounded reason', async () => {

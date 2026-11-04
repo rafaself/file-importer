@@ -3,7 +3,7 @@ import { ImportRowStatus, ImportStatus } from '@csv/shared';
 import { Injectable } from '@nestjs/common';
 import { InjectDisk, StorageDisk } from '@nestjs/storage';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
 import {
   CsvFileError,
   parseCustomerRecords,
@@ -109,7 +109,31 @@ export class ImportProcessingService {
     outcomes: CustomerRowOutcome[],
   ): Promise<void> {
     await this.rows.manager.transaction(async (manager) => {
+      const imports = manager.getRepository(Import);
+      // Serialize batch updates before reading old statuses and counters.
+      const current = await imports.findOneOrFail({
+        where: { id: importId },
+        lock: { mode: 'pessimistic_write' },
+      });
       const rows = manager.getRepository(ImportRow);
+      const previousRows = await rows.find({
+        select: { rowNumber: true, status: true },
+        where: {
+          import: { id: importId },
+          rowNumber: In(outcomes.map((outcome) => outcome.rowNumber)),
+        },
+      });
+      let successRows = current.successRows;
+      let failedRows = current.failedRows;
+      // Subtract replaced outcomes so retries and status changes stay idempotent.
+      for (const row of previousRows) {
+        if (row.status === ImportRowStatus.VALID) successRows--;
+        if (row.status === ImportRowStatus.INVALID) failedRows--;
+      }
+      for (const outcome of outcomes) {
+        if (outcome.status === ImportRowStatus.VALID) successRows++;
+        if (outcome.status === ImportRowStatus.INVALID) failedRows++;
+      }
       await rows.upsert(
         outcomes.map((outcome) =>
           rows.create({
@@ -123,8 +147,11 @@ export class ImportProcessingService {
         { conflictPaths: ['import', 'rowNumber'] },
       );
 
-      const counts = await this.getRowCounts(importId, rows);
-      await manager.getRepository(Import).update(importId, counts);
+      await imports.update(importId, {
+        processedRows: successRows + failedRows,
+        successRows,
+        failedRows,
+      });
     });
   }
 
